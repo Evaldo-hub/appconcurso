@@ -1,0 +1,22 @@
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your_key
+
+# n8n (configurar como secrets da Supabase Edge Function, nunca NEXT_PUBLIC_*)
+N8N_WEBHOOK_URL=https://your-n8n.example.com/webhook/estudo-ia
+N8N_STUDY_WEBHOOK_URL=http://localhost:5678/webhook/explicar-questao
+N8N_GENERATE_QUESTIONS_WEBHOOK_URL=http://localhost:5678/webhook/gerar-questoes
+# Se omitida, a geração usa N8N_WEBHOOK_URL como fallback e envia acao=gerar_questoes.
+N8N_API_KEY=your_n8n_api_key
+N8N_TELEGRAM_WEBHOOK_URL=https://your-n8n.example.com/webhook/telegram
+ALLOWED_ORIGIN=http://localhost:3001
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_WEBHOOK_SECRET=use_a_long_random_value
+
+# App
+NEXT_PUBLIC_APP_URL=http://localhost:3001
+NEXT_PUBLIC_AI_GATEWAY=local
+NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=your_bot_username
+
+# Apenas no servidor Next.js durante testes locais
+SUPABASE_SECRET_KEY=sb_secret_your_key
