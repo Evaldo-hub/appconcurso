@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const serviceKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY
-    const n8nUrl = process.env.N8N_STUDY_WEBHOOK_URL
+    const n8nUrl = process.env.NEXT_PUBLIC_N8N_EXPLICAR_QUESTAO_URL
     const n8nKey = process.env.N8N_API_KEY
     if (!supabaseUrl || !serviceKey || !n8nUrl || !n8nKey) return json({ error: 'Gateway local de IA não configurado.' }, 503)
 
