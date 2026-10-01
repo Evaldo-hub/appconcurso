@@ -1,6 +1,9 @@
 import Link from 'next/link'
+import { MessageCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
+const whatsappUrl = 'https://wa.me/5591981989492?text=Ol%C3%A1%21%20Vim%20pelo%20aplicativo%20de%20estudos.'
 
 export default function Home() {
   return (
@@ -66,6 +69,22 @@ export default function Home() {
           <Button asChild size="lg" variant="outline">
             <Link href="/register">Criar conta</Link>
           </Button>
+        </div>
+
+        <div className="flex justify-center">
+          <a
+            href={whatsappUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-3 rounded-lg border bg-card px-4 py-3 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            aria-label="Fale comigo pelo WhatsApp no número (91) 98198-9492"
+          >
+            <MessageCircle className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="text-left">
+              <span className="block text-xs text-muted-foreground">Fale comigo pelo WhatsApp</span>
+              <span className="font-medium">(91) 98198-9492</span>
+            </span>
+          </a>
         </div>
       </div>
     </div>

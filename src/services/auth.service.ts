@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/client'
 import { AuthError, Session, User } from '@supabase/supabase-js'
+import { assertInitialConcursoId } from '@/lib/auth/initial-concurso'
 
 export interface LoginCredentials {
   email: string
@@ -10,6 +11,7 @@ export interface RegisterCredentials {
   email: string
   password: string
   nome?: string
+  concursoInicialId: number
 }
 
 export interface ResetPasswordCredentials {
@@ -52,12 +54,14 @@ class AuthService {
       throw new Error('Supabase não está configurado. Configure as variáveis de ambiente.')
     }
 
+    const concursoInicialId = assertInitialConcursoId(credentials.concursoInicialId)
     const { data, error } = await this.supabase.auth.signUp({
       email: credentials.email,
       password: credentials.password,
       options: {
         data: {
           nome: credentials.nome,
+          concurso_inicial_id: concursoInicialId,
         },
       },
     })
@@ -150,7 +154,7 @@ class AuthService {
 
   onAuthStateChange(callback: (event: string, session: Session | null) => void) {
     // Verificar se Supabase está configurado
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+    if (!isSupabaseConfigured()) {
       return { data: { subscription: { unsubscribe: () => {} } } }
     }
 

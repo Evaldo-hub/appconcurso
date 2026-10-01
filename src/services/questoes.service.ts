@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client'
+import { canonicalDifficultyOptions, difficultyQueryValues, formatContestLabel, formatExamLabel, type QuestionBankFilterData, type QuestionCatalogEntry } from '@/lib/questions/question-filter-catalog'
 
 export interface QuestionFilters {
   concursoId: string
@@ -89,6 +90,58 @@ const toOptions = (values: Array<string | null>) => Array.from(new Set(values.fi
 class QuestoesService {
   private supabase = createClient()
 
+  async getQuestionBankFilterData(): Promise<QuestionBankFilterData> {
+    const [concursosResult, provasResult] = await Promise.all([
+      this.supabase.from('concursos').select('id, nome, orgao, ano, banca').order('nome'),
+      this.supabase.from('provas').select('id, concurso_id, nome, cargo, especialidade').order('nome'),
+    ])
+
+    const error = concursosResult.error || provasResult.error
+    if (error) throw new Error('Não foi possível carregar os filtros do banco de questões.')
+
+    return {
+      concursos: (concursosResult.data ?? []).map((item) => ({
+        value: String(item.id),
+        label: formatContestLabel(item.nome, item.ano),
+        banca: item.banca?.trim() ?? '',
+      })),
+      provas: (provasResult.data ?? []).map((item) => ({
+        value: String(item.id),
+        label: formatExamLabel(item.nome, item.cargo, item.especialidade),
+        parentId: String(item.concurso_id),
+      })),
+      catalogo: [],
+      dificuldades: canonicalDifficultyOptions,
+    }
+  }
+
+  async getQuestionCatalog(concursoId: string, provaId: string): Promise<QuestionCatalogEntry[]> {
+    const { data, error } = await this.supabase
+      .from('conteudo_programatico')
+      .select('concurso_id, prova_id, disciplina, assunto, subassunto, ordem, disciplina_ordem, assunto_ordem, subassunto_ordem')
+      .eq('concurso_id', concursoId)
+      .eq('prova_id', provaId)
+      .eq('ativo', true)
+      .order('disciplina_ordem', { ascending: true })
+      .order('assunto_ordem', { ascending: true, nullsFirst: true })
+      .order('subassunto_ordem', { ascending: true, nullsFirst: true })
+      .range(0, 9999)
+
+    if (error) throw new Error('Não foi possível carregar o catálogo do banco de questões.')
+
+    return (data ?? []).map<QuestionCatalogEntry>((item) => ({
+        concursoId: String(item.concurso_id),
+        provaId: String(item.prova_id),
+        disciplina: item.disciplina,
+        assunto: item.assunto,
+        subassunto: item.subassunto,
+        ordem: item.ordem,
+        disciplinaOrdem: item.disciplina_ordem,
+        assuntoOrdem: item.assunto_ordem,
+        subassuntoOrdem: item.subassunto_ordem,
+      }))
+  }
+
   async getFilterOptions(): Promise<QuestionFilterOptions> {
     const [concursosResult, provasResult, metadataResult] = await Promise.all([
       this.supabase.from('concursos').select('id, nome, orgao, ano').order('nome'),
@@ -126,7 +179,10 @@ class QuestoesService {
     if (filters.disciplina) query = query.eq('disciplina', filters.disciplina)
     if (filters.assunto) query = query.eq('assunto', filters.assunto)
     if (filters.subassunto) query = query.eq('subassunto', filters.subassunto)
-    if (filters.dificuldade) query = query.eq('dificuldade', filters.dificuldade)
+    if (filters.dificuldade) {
+      const values = difficultyQueryValues(filters.dificuldade)
+      query = values.length > 0 ? query.in('dificuldade', values) : query.eq('dificuldade', filters.dificuldade)
+    }
     if (filters.ids) {
       const ids = filters.ids.split(',').map(Number).filter((id) => Number.isSafeInteger(id) && id > 0)
       if (ids.length > 0) query = query.in('id', ids)

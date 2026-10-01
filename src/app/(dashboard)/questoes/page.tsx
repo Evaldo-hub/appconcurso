@@ -10,9 +10,9 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 
-interface FilterSelectProps { label: string; value: string; options: FilterOption[]; onChange: (value: string) => void }
-function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
-  return <label className="space-y-1.5 text-sm font-medium"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"><option value="">Todos</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+interface FilterSelectProps { label: string; value: string; options: FilterOption[]; onChange: (value: string) => void; disabled?: boolean }
+function FilterSelect({ label, value, options, onChange, disabled = false }: FilterSelectProps) {
+  return <label className="space-y-1.5 text-sm font-medium"><span>{label}</span><select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"><option value="">Todos</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
 }
 
 const filterFields: Array<{ key: Exclude<keyof QuestionFilters, 'status' | 'ids'>; label: string }> = [
@@ -31,6 +31,12 @@ export default function QuestoesPage() {
   const question = page.question
 
   const optionList = (key: Exclude<keyof QuestionFilters, 'status' | 'ids'>) => options[key === 'concursoId' ? 'concursos' : key === 'provaId' ? 'provas' : key === 'banca' ? 'bancas' : key === 'disciplina' ? 'disciplinas' : key === 'assunto' ? 'assuntos' : key === 'subassunto' ? 'subassuntos' : 'dificuldades']
+  const filterDisabled = (key: Exclude<keyof QuestionFilters, 'status' | 'ids'>) => key === 'provaId' ? !draftFilters.concursoId
+    : key === 'banca' ? true
+      : key === 'disciplina' ? !draftFilters.concursoId || !draftFilters.provaId
+        : key === 'assunto' ? !draftFilters.disciplina
+          : key === 'subassunto' ? !draftFilters.assunto || options.subassuntos.length === 0
+            : false
 
   return (
     <div className="space-y-6 fade-in">
@@ -40,7 +46,7 @@ export default function QuestoesPage() {
         <CardHeader><CardTitle className="flex items-center gap-2 text-lg"><Filter className="h-5 w-5" />Filtros</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filterFields.map((field) => <FilterSelect key={field.key} label={field.label} value={draftFilters[field.key]} options={optionList(field.key)} onChange={(value) => updateFilter(field.key, value)} />)}
+            {filterFields.map((field) => <FilterSelect key={field.key} label={field.label} value={draftFilters[field.key]} options={optionList(field.key)} onChange={(value) => updateFilter(field.key, value)} disabled={filterDisabled(field.key)} />)}
             <FilterSelect label="Situação" value={draftFilters.status} options={statusOptions} onChange={(value) => updateFilter('status', value as QuestionFilters['status'])} />
           </div>
           <div className="flex flex-wrap gap-2"><Button onClick={applyFilters} disabled={loading}><Search />Aplicar filtros</Button><Button variant="outline" onClick={clearFilters} disabled={loading}><RotateCcw />Limpar</Button></div>

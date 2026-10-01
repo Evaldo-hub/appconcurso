@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { generateQuestions } from '@/lib/ai/generate-questions'
+import { saveGeneratedQuestions } from '@/lib/ai/save-generated-questions'
+import { fetchRecentQuestionStatements } from '@/lib/ai/question-diversity'
+import { tryBuildHistoricalConceptMap } from '@/lib/ai/historical-concept-map'
+import { validateBeforePersistence } from '@/lib/ai/validate-generated-question'
 
 const inputSchema = z.object({
   concurso_id: z.coerce.number().int().positive(),
@@ -13,89 +18,403 @@ const inputSchema = z.object({
   quantidade: z.coerce.number().int().min(1).max(50),
 })
 
-const json = (body: Record<string, unknown>, status = 200) => NextResponse.json(body, { status })
+const json = (
+  body: Record<string, unknown>,
+  status = 200,
+) => NextResponse.json(body, { status })
 
 export async function POST(request: NextRequest) {
   try {
+    /*
+     * 1. Validação da origem da requisição
+     */
     const expectedOrigin = process.env.NEXT_PUBLIC_APP_URL
     const origin = request.headers.get('origin')
-    if (expectedOrigin && origin && origin !== expectedOrigin) return json({ error: 'Origem não permitida.' }, 403)
 
-    const webhookUrl = process.env.N8N_GENERATE_QUESTIONS_WEBHOOK_URL
-      ?? process.env.NEXT_PUBLIC_N8N_WEBHOOK_URL
-      ?? process.env.N8N_WEBHOOK_URL
-    if (!webhookUrl) return json({ error: 'Webhook de geração não configurado.' }, 503)
+    if (
+      expectedOrigin &&
+      origin &&
+      origin !== expectedOrigin
+    ) {
+      return json(
+        { error: 'Origem não permitida.' },
+        403,
+      )
+    }
 
+    /*
+     * 2. Usuário autenticado
+     */
     const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) return json({ error: 'Sessão inválida ou expirada.' }, 401)
 
-    const parsed = inputSchema.safeParse(await request.json().catch(() => null))
-    if (!parsed.success) return json({ error: 'Revise os campos da geração.' }, 400)
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return json(
+        { error: 'Sessão inválida ou expirada.' },
+        401,
+      )
+    }
+
+    /*
+     * 3. Validação dos dados recebidos
+     */
+    const body = await request
+      .json()
+      .catch(() => null)
+
+    const parsed = inputSchema.safeParse(body)
+
+    if (!parsed.success) {
+      return json(
+        { error: 'Revise os campos da geração.' },
+        400,
+      )
+    }
+
     const input = parsed.data
     const admin = createAdminClient()
 
-    const { data: hasAccess, error: accessError } = await admin.rpc('usuario_tem_acesso', { p_usuario_id: user.id })
-    if (accessError && accessError.code !== 'PGRST202') return json({ error: 'Não foi possível validar seu acesso.' }, 503)
-    if (!accessError && !hasAccess) return json({ error: 'Seu período de acesso expirou.' }, 403)
+    /*
+     * 4. Validação do acesso do usuário
+     */
+    const {
+      data: hasAccess,
+      error: accessError,
+    } = await admin.rpc(
+      'usuario_tem_acesso',
+      {
+        p_usuario_id: user.id,
+      },
+    )
 
-    const [{ data: exam }, { data: metadata }] = await Promise.all([
-      admin.from('provas').select('id').eq('id', input.prova_id).eq('concurso_id', input.concurso_id).maybeSingle(),
-      admin.from('questoes_estudo').select('id').eq('disciplina', input.disciplina).eq('assunto', input.assunto).eq('banca', input.banca).limit(1).maybeSingle(),
+    if (
+      accessError &&
+      accessError.code !== 'PGRST202'
+    ) {
+      return json(
+        {
+          error:
+            'Não foi possível validar seu acesso.',
+        },
+        503,
+      )
+    }
+
+    if (!accessError && !hasAccess) {
+      return json(
+        {
+          error:
+            'Seu período de acesso expirou.',
+        },
+        403,
+      )
+    }
+
+    /*
+     * 5. Confirma:
+     *    - concurso
+     *    - prova
+     *    - conteúdo programático
+     */
+    const [
+      { data: contest },
+      { data: exam },
+      { data: catalogEntry },
+    ] = await Promise.all([
+      admin
+        .from('concursos')
+        .select('id, banca')
+        .eq('id', input.concurso_id)
+        .maybeSingle(),
+
+      admin
+        .from('provas')
+        .select('id')
+        .eq('id', input.prova_id)
+        .eq(
+          'concurso_id',
+          input.concurso_id,
+        )
+        .maybeSingle(),
+
+      admin
+        .from('conteudo_programatico')
+        .select('id')
+        .eq(
+          'concurso_id',
+          input.concurso_id,
+        )
+        .eq(
+          'prova_id',
+          input.prova_id,
+        )
+        .eq(
+          'disciplina',
+          input.disciplina,
+        )
+        .eq(
+          'assunto',
+          input.assunto,
+        )
+        .eq('ativo', true)
+        .limit(1)
+        .maybeSingle(),
     ])
-    if (!exam) return json({ error: 'A prova não pertence ao concurso selecionado.' }, 400)
-    if (!metadata) return json({ error: 'A combinação de disciplina, assunto e banca não existe no catálogo.' }, 400)
 
-    const { data: allowed, error: limitError } = await admin.rpc('consumir_limite_integracao', {
-      p_usuario_id: user.id, p_chave: 'gerar-questoes', p_limite: 10, p_janela_segundos: 600,
-    })
-    if (limitError) return json({ error: 'Controle de segurança indisponível.' }, 503)
-    if (!allowed) return json({ error: 'Muitas gerações solicitadas. Aguarde alguns minutos.' }, 429)
+    if (!contest) {
+      return json(
+        {
+          error:
+            'Concurso não encontrado.',
+        },
+        400,
+      )
+    }
 
+    if (!exam) {
+      return json(
+        {
+          error:
+            'A prova não pertence ao concurso selecionado.',
+        },
+        400,
+      )
+    }
+
+    if (!catalogEntry) {
+      return json(
+        {
+          error:
+            'A disciplina e o assunto não pertencem ao conteúdo programático da prova.',
+        },
+        400,
+      )
+    }
+
+    /*
+     * 6. A banca recebida precisa ser a banca
+     *    cadastrada para o concurso.
+     */
+    if (
+      !contest.banca?.trim() ||
+      contest.banca.trim() !== input.banca
+    ) {
+      return json(
+        {
+          error:
+            'A banca não corresponde ao concurso selecionado.',
+        },
+        400,
+      )
+    }
+
+    /*
+     * 7. Rate limit
+     */
+    const {
+      data: allowed,
+      error: limitError,
+    } = await admin.rpc(
+      'consumir_limite_integracao',
+      {
+        p_usuario_id: user.id,
+        p_chave: 'gerar-questoes',
+        p_limite: 10,
+        p_janela_segundos: 600,
+      },
+    )
+
+    if (limitError) {
+      return json(
+        {
+          error:
+            'Controle de segurança indisponível.',
+        },
+        503,
+      )
+    }
+
+    if (!allowed) {
+      return json(
+        {
+          error:
+            'Muitas gerações solicitadas. Aguarde alguns minutos.',
+        },
+        429,
+      )
+    }
+
+    /*
+     * 8. Identificador da geração
+     */
     const sessionId = crypto.randomUUID()
-    const startedAt = new Date().toISOString()
-    const command = `Gere ${input.quantidade} questões de ${input.disciplina} sobre ${input.assunto}, nível ${input.dificuldade}, no estilo ${input.banca}.`
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 120000)
-    let webhookResponse: Response
+
+    /*
+     * 9. Geração nativa das questões
+     *
+     * Fluxo:
+     *
+     * Next.js
+     *   ↓
+     * Gemini
+     *   ↓ fallback
+     * Groq
+     *   ↓
+     * Zod
+     *
+     * Não há n8n nesta etapa.
+     */
+    let enunciadosAnteriores: string[] = []
+
     try {
-      webhookResponse = await fetch(webhookUrl, {
-        method: 'POST', signal: controller.signal,
-        headers: { 'Content-Type': 'application/json', ...(process.env.N8N_API_KEY ? { 'X-API-Key': process.env.N8N_API_KEY } : {}) },
-        body: JSON.stringify({ acao: 'gerar_questoes', usuario_id: user.id, session_id: sessionId, concurso_id: input.concurso_id, prova_id: input.prova_id, disciplina: input.disciplina, assunto: input.assunto, banca: input.banca, dificuldade: input.dificuldade, quantidade: input.quantidade, comando: command, origem: 'app' }),
+      enunciadosAnteriores = await fetchRecentQuestionStatements(admin, {
+        concursoId: input.concurso_id,
+        provaId: input.prova_id,
+        disciplina: input.disciplina,
+        assunto: input.assunto,
       })
-    } catch (error) {
-      return json({ error: error instanceof DOMException && error.name === 'AbortError' ? 'A geração excedeu o tempo máximo de dois minutos.' : 'Não foi possível conectar ao webhook do n8n.' }, error instanceof DOMException && error.name === 'AbortError' ? 504 : 502)
-    } finally { clearTimeout(timeout) }
-
-    const responseText = await webhookResponse.text()
-    if (!webhookResponse.ok) return json({ error: `O n8n não conseguiu processar a geração (HTTP ${webhookResponse.status}).` }, 502)
-    if (!responseText.trim()) return json({ error: 'O workflow terminou sem retornar JSON. No n8n, conecte todos os ramos ao nó Respond to Webhook.' }, 502)
-
-    let parsedResponse: unknown
-    try { parsedResponse = JSON.parse(responseText) } catch { return json({ error: 'O workflow respondeu, mas o conteúdo não é um JSON válido.' }, 502) }
-    const firstItem = Array.isArray(parsedResponse) ? parsedResponse[0] : parsedResponse
-    const wrappedItem = firstItem && typeof firstItem === 'object' && 'json' in firstItem
-      ? (firstItem as { json?: unknown }).json
-      : firstItem
-    const result = wrappedItem && typeof wrappedItem === 'object' ? wrappedItem as Record<string, unknown> : null
-    const succeeded = result?.sucesso === true || result?.sucesso === 'true'
-    if (!result || !succeeded) {
-      const workflowMessage = typeof result?.resposta === 'string' ? result.resposta : typeof result?.error === 'string' ? result.error : ''
-      return json({ error: workflowMessage || 'O n8n retornou uma resposta de geração sem sucesso.' }, 502)
+    } catch (diversityError) {
+      console.warn(
+        '[AI] Contexto de diversidade indisponível; a geração continuará.',
+        diversityError instanceof Error ? diversityError.message : 'Erro desconhecido',
+      )
     }
 
-    let questionIds = Array.isArray(result.questao_ids) ? result.questao_ids.map(Number).filter(Number.isSafeInteger) : []
-    if (questionIds.length === 0) {
-      const expected = Math.max(0, Number(result.cadastradas) || 0)
-      if (expected > 0) {
-        const { data } = await admin.from('questoes_estudo').select('id').eq('concurso_id', input.concurso_id).eq('prova_id', input.prova_id).eq('disciplina', input.disciplina).eq('assunto', input.assunto).gte('criado_em', startedAt).order('criado_em', { ascending: false }).limit(expected)
-        questionIds = (data ?? []).map((item) => Number(item.id)).filter(Number.isSafeInteger)
-      }
+    console.info('[AI] Histórico de diversidade carregado.', { quantidade: enunciadosAnteriores.length })
+
+    const mapaConceitualHistorico = await tryBuildHistoricalConceptMap({
+      disciplina: input.disciplina,
+      assunto: input.assunto,
+      enunciados: enunciadosAnteriores,
+    })
+
+    console.info('[AI] Mapa conceitual histórico preparado.', {
+      conceitos: mapaConceitualHistorico.conceitos.length,
+      utilizado: mapaConceitualHistorico.conceitos.length > 0,
+    })
+
+    const generated = await generateQuestions({
+      disciplina: input.disciplina,
+      assunto: input.assunto,
+      banca: input.banca,
+      dificuldade: input.dificuldade,
+      quantidade: input.quantidade,
+      enunciadosAnteriores,
+      mapaConceitualHistorico,
+    })
+
+    const semantic = await validateBeforePersistence(
+      generated.questoes,
+      {
+        disciplina: input.disciplina,
+        assunto: input.assunto,
+        subassunto: null,
+        banca: input.banca,
+        dificuldade: input.dificuldade,
+      },
+      (approvedQuestions) => saveGeneratedQuestions({
+        admin,
+        concursoId: input.concurso_id,
+        provaId: input.prova_id,
+        disciplina: input.disciplina,
+        assunto: input.assunto,
+        banca: input.banca,
+        dificuldade: input.dificuldade,
+        questoes: approvedQuestions,
+      }),
+    )
+
+    /*
+     * 10. Cadastro no Supabase
+     *
+     * O módulo:
+     * - calcula SHA-256;
+     * - verifica duplicidade;
+     * - grava questoes_estudo;
+     * - trata unique violation;
+     * - retorna os IDs cadastrados.
+     */
+    const saveResult = semantic.persistencia ?? {
+      total_analisadas: 0,
+      cadastradas: 0,
+      duplicadas: 0,
+      erros: 0,
+      questao_ids: [],
+      resultados: [],
     }
 
-    return json({ sucesso: true, total_analisadas: Math.max(0, Number(result.total_analisadas) || 0), cadastradas: Math.max(0, Number(result.cadastradas) || 0), duplicadas: Math.max(0, Number(result.duplicadas) || 0), erros: Math.max(0, Number(result.erros) || 0), resposta: typeof result.resposta === 'string' ? result.resposta : '', session_id: typeof result.session_id === 'string' ? result.session_id : sessionId, usuario_id: user.id, origem: 'n8n', questao_ids: questionIds, filtros: input })
-  } catch {
-    return json({ error: 'Não foi possível processar a geração.' }, 500)
+    /*
+     * 11. Resposta para o frontend
+     */
+    return json({
+      sucesso: saveResult.erros === 0 && semantic.validacao.rejeitadas === 0,
+
+      total_analisadas:
+        saveResult.total_analisadas,
+
+      cadastradas:
+        saveResult.cadastradas,
+
+      duplicadas:
+        saveResult.duplicadas,
+
+      erros:
+        saveResult.erros,
+
+      resposta:
+        `${saveResult.cadastradas} questão(ões) cadastrada(s), ` +
+        `${saveResult.duplicadas} duplicada(s) e ` +
+        `${saveResult.erros} erro(s).`,
+
+      session_id: sessionId,
+
+      usuario_id: user.id,
+
+      /*
+       * Informa qual provedor efetivamente
+       * respondeu: gemini ou groq.
+       */
+      origem: generated.provider,
+
+      gravado_no_banco:
+        saveResult.cadastradas > 0,
+
+      questao_ids:
+        saveResult.questao_ids,
+
+      /*
+       * Mantemos as questões na resposta para
+       * compatibilidade com a interface.
+       */
+      questoes:
+        semantic.questoes,
+
+      validacao: semantic.validacao,
+
+      rejeicoes_validacao: semantic.rejeicoes,
+
+      resultados: semantic.resultados,
+
+      filtros: input,
+    })
+  } catch (error) {
+    console.error(
+      '[AI] Erro na geração de questões:',
+      error,
+    )
+
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Não foi possível processar a geração.',
+      },
+      500,
+    )
   }
 }

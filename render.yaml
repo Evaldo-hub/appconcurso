@@ -9,7 +9,7 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: NODE_VERSION
-        value: 22.22.0
+        value: 24.12.0
       - key: NEXT_PUBLIC_SUPABASE_URL
         sync: false
       - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
@@ -25,4 +25,14 @@ services:
       - key: N8N_GENERATE_QUESTIONS_WEBHOOK_URL
         sync: false
       - key: N8N_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: RAG_GITHUB_OWNER
+        sync: false
+      - key: RAG_GITHUB_REPOSITORY
+        sync: false
+      - key: RAG_GITHUB_REF
+        sync: false
+      - key: RAG_GITHUB_TOKEN
         sync: false

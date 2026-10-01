@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -12,12 +12,24 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { createClient } from '@/lib/supabase/client'
+
+interface OnboardingContest {
+  id: number
+  nome: string
+  orgao: string
+  banca: string | null
+  ano: number | null
+  cargo: string | null
+  especialidade: string | null
+}
 
 const registerSchema = z.object({
   nome: z.string().min(2, 'Nome deve ter pelo menos 2 caracteres'),
   email: z.string().email('Email inválido'),
   password: z.string().min(6, 'A senha deve ter pelo menos 6 caracteres'),
   confirmPassword: z.string().min(6, 'Confirme sua senha'),
+  concursoInicialId: z.string().regex(/^[1-9]\d*$/, 'Selecione um concurso'),
 }).refine((data) => data.password === data.confirmPassword, {
   message: 'As senhas não coincidem',
   path: ['confirmPassword'],
@@ -30,6 +42,30 @@ export default function RegisterPage() {
   const { register: registerUser, loading } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [contests, setContests] = useState<OnboardingContest[]>([])
+  const [contestsLoading, setContestsLoading] = useState(true)
+  const [contestsError, setContestsError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const loadContests = async () => {
+      try {
+        const { data, error: catalogError } = await createClient().rpc('listar_concursos_onboarding')
+        if (!active) return
+        if (catalogError) {
+          setContestsError('Não foi possível carregar os concursos disponíveis.')
+          return
+        }
+        setContests((data ?? []) as OnboardingContest[])
+      } catch {
+        if (active) setContestsError('Não foi possível carregar os concursos disponíveis.')
+      } finally {
+        if (active) setContestsLoading(false)
+      }
+    }
+    void loadContests()
+    return () => { active = false }
+  }, [])
 
   const {
     register,
@@ -47,6 +83,7 @@ export default function RegisterPage() {
       email: data.email,
       password: data.password,
       nome: data.nome,
+      concursoInicialId: Number(data.concursoInicialId),
     })
 
     if (result.success) {
@@ -92,6 +129,23 @@ export default function RegisterPage() {
                 <AlertDescription>{error}</AlertDescription>
               </Alert>
             )}
+
+            {contestsError && <Alert variant="destructive"><AlertDescription>{contestsError}</AlertDescription></Alert>}
+
+            <div className="space-y-2">
+              <Label htmlFor="concursoInicialId">Concurso que pretende estudar</Label>
+              <select
+                id="concursoInicialId"
+                disabled={contestsLoading || Boolean(contestsError)}
+                defaultValue=""
+                {...register('concursoInicialId')}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <option value="">{contestsLoading ? 'Carregando concursos...' : 'Selecione um concurso'}</option>
+                {contests.map((contest) => <option key={contest.id} value={contest.id}>{[contest.nome, contest.ano, contest.cargo, contest.especialidade].filter(Boolean).join(' — ')}</option>)}
+              </select>
+              {errors.concursoInicialId && <p className="text-sm text-destructive">{errors.concursoInicialId.message}</p>}
+            </div>
 
             <div className="space-y-2">
               <Label htmlFor="nome">Nome</Label>
@@ -149,7 +203,7 @@ export default function RegisterPage() {
             <Button
               type="submit"
               className="w-full"
-              disabled={isSubmitting || !isSupabaseConfigured}
+              disabled={isSubmitting || contestsLoading || Boolean(contestsError) || contests.length === 0 || !isSupabaseConfigured}
             >
               {isSubmitting ? 'Criando conta...' : 'Criar conta'}
             </Button>

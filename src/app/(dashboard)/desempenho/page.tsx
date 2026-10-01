@@ -1,24 +1,36 @@
-'use client'
-
-import { AlertCircle, CheckCircle2, RotateCcw, Target, TrendingDown, TrendingUp, XCircle } from 'lucide-react'
-import { useDesempenho } from '@/hooks/useDesempenho'
-import { MetricCard } from '@/components/dashboard/metric-card'
-import { SimpleChart } from '@/components/dashboard/simple-chart'
-import { Alert } from '@/components/ui/alert'
+import Link from 'next/link'
+import { redirect } from 'next/navigation'
+import { CheckCircle2, Clock3, ListChecks, Target, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { formatStudyTime } from '@/lib/study/study-performance'
+import { loadStudyPerformance } from '@/lib/study/study-performance-loader'
 
-function RankingList({ title, items, attention = false }: { title: string; items: Array<{ label: string; total: number; percentual: number }>; attention?: boolean }) {
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2">{attention ? <TrendingDown className="h-5 w-5 text-orange-500" /> : <TrendingUp className="h-5 w-5 text-green-600" />}{title}</CardTitle></CardHeader><CardContent>{items.length === 0 ? <p className="py-8 text-center text-sm text-muted-foreground">Responda ao menos três questões por assunto para gerar este ranking.</p> : <div className="space-y-3">{items.map((item, index) => <div key={item.label} className="flex items-center gap-3 rounded-lg border p-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-muted font-bold">{index + 1}</span><div className="min-w-0 flex-1"><p className="truncate font-medium">{item.label}</p><p className="text-xs text-muted-foreground">{item.total} questões</p></div><span className={attention ? 'font-semibold text-orange-600' : 'font-semibold text-green-600'}>{item.percentual}%</span></div>)}</div>}</CardContent></Card>
-}
+const percent = (value: number) => `${value.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+const dateTime = (value: string) => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(value))
 
-export default function DesempenhoPage() {
-  const { data, loading, error, reload } = useDesempenho()
-  if (error && !data) return <div className="mx-auto max-w-2xl py-12"><Alert variant="destructive" className="space-y-3"><div className="flex gap-2"><AlertCircle className="h-5 w-5" /><p>{error}</p></div><Button size="sm" variant="outline" onClick={reload}><RotateCcw />Tentar novamente</Button></Alert></div>
-  const metrics = data?.metricas
-  return <div className="space-y-6 fade-in"><div><h1 className="text-2xl font-bold md:text-3xl">Desempenho</h1><p className="text-muted-foreground">Analise sua evolução e priorize os assuntos que precisam de atenção.</p></div>
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><MetricCard title="Percentual geral" value={`${metrics?.percentual ?? 0}%`} icon={Target} loading={loading} /><MetricCard title="Questões respondidas" value={metrics?.respondidas ?? 0} icon={RotateCcw} loading={loading} /><MetricCard title="Acertos" value={metrics?.acertos ?? 0} icon={CheckCircle2} loading={loading} /><MetricCard title="Erros" value={metrics?.erros ?? 0} icon={XCircle} loading={loading} /></div>
-    <div className="grid gap-6 xl:grid-cols-2"><SimpleChart title="Evolução diária — últimos 30 dias (%)" loading={loading} data={(data?.evolucao_diaria ?? []).map((item) => ({ label: new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(`${item.data}T12:00:00`)), value: item.percentual }))} /><SimpleChart title="Evolução nos simulados (%)" loading={loading} data={(data?.evolucao_simulados ?? []).map((item) => ({ label: new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(new Date(item.data)), value: item.percentual }))} /><SimpleChart title="Desempenho por disciplina (%)" loading={loading} data={(data?.por_disciplina ?? []).map((item) => ({ label: item.label, value: item.percentual }))} /><SimpleChart title="Desempenho por assunto (%)" loading={loading} data={(data?.por_assunto ?? []).map((item) => ({ label: item.label, value: item.percentual }))} /><SimpleChart title="Distribuição de erros por dificuldade" loading={loading} data={(data?.erros_por_dificuldade ?? []).map((item) => ({ label: item.label, value: item.total }))} /></div>
-    <div className="grid gap-6 xl:grid-cols-2"><RankingList title="Melhores assuntos" items={data?.melhores_assuntos ?? []} /><RankingList title="Assuntos que precisam de atenção" items={data?.assuntos_atencao ?? []} attention /></div>
+export default async function DesempenhoPage() {
+  const result = await loadStudyPerformance(20)
+  if (!result.authenticated) redirect('/login?redirectTo=/desempenho')
+  const { summary, disciplines, subjects, history } = result.data
+  if (summary.totalRespondidas === 0) return <div className="mx-auto max-w-4xl space-y-6"><Header /><Card><CardContent className="space-y-4 py-16 text-center"><ListChecks className="mx-auto h-10 w-10 text-muted-foreground" /><h2 className="text-lg font-semibold">Você ainda não respondeu questões.</h2><p className="text-sm text-muted-foreground">Resolva questões para começar a acompanhar seu desempenho.</p><Button asChild><Link href="/questoes/gerar">Gerar questões</Link></Button></CardContent></Card></div>
+
+  return <div className="space-y-6 fade-in"><Header />
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" aria-label="Resumo do desempenho">
+      <Metric title="Questões respondidas" value={summary.totalRespondidas} icon={ListChecks} />
+      <Metric title="Acertos" value={summary.totalCorretas} icon={CheckCircle2} />
+      <Metric title="Erros" value={summary.totalIncorretas} icon={XCircle} />
+      <Metric title="Taxa de acerto" value={percent(summary.taxaAcerto)} icon={Target} />
+      <Metric title="Tempo médio" value={formatStudyTime(summary.tempoMedio)} icon={Clock3} />
+    </section>
+    <PerformanceTable title="Desempenho por disciplina" rows={disciplines.map((item) => ({ key: item.disciplina, label: item.disciplina, ...item }))} />
+    <PerformanceTable title="Desempenho por assunto" rows={subjects.map((item) => ({ key: `${item.disciplina}-${item.assunto}`, label: `${item.disciplina} — ${item.assunto}`, ...item }))} />
+    <Card><CardHeader><CardTitle>Histórico recente</CardTitle></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm"><thead><tr className="border-b text-left text-muted-foreground"><th className="pb-3 pr-4">Data</th><th className="pb-3 pr-4">Disciplina / assunto</th><th className="pb-3 pr-4">Resposta</th><th className="pb-3 pr-4">Resultado</th><th className="pb-3 pr-4">Tempo</th><th className="pb-3">Questão</th></tr></thead><tbody>{history.map((item) => <tr key={item.id} className="border-b last:border-0"><td className="py-3 pr-4 whitespace-nowrap">{dateTime(item.createdAt)}</td><td className="py-3 pr-4"><span className="block font-medium">{item.disciplina}</span><span className="text-muted-foreground">{item.assunto}</span></td><td className="py-3 pr-4 font-semibold">{item.alternativaSelecionada}</td><td className={`py-3 pr-4 font-medium ${item.correta ? 'text-green-700' : 'text-destructive'}`}>{item.correta ? 'Correta' : 'Incorreta'}</td><td className="py-3 pr-4 whitespace-nowrap">{formatStudyTime(item.tempoGasto)}</td><td className="py-3"><Link className="font-medium text-primary underline-offset-4 hover:underline" href={`/questoes/${item.questaoId}`}>Abrir #{item.questaoId}</Link></td></tr>)}</tbody></table></CardContent></Card>
   </div>
 }
+
+function Header() { return <div><h1 className="text-2xl font-bold tracking-tight md:text-3xl">Meu desempenho</h1><p className="text-muted-foreground">Histórico baseado nas suas respostas persistidas.</p></div> }
+
+function Metric({ title, value, icon: Icon }: { title: string; value: string | number; icon: typeof ListChecks }) { return <Card><CardContent className="flex items-center gap-3 p-5"><div className="rounded-lg bg-primary/10 p-2 text-primary"><Icon className="h-5 w-5" /></div><div><p className="text-sm text-muted-foreground">{title}</p><p className="text-2xl font-bold">{value}</p></div></CardContent></Card> }
+
+function PerformanceTable({ title, rows }: { title: string; rows: Array<{ key: string; label: string; respondidas: number; corretas: number; incorretas: number; taxaAcerto: number }> }) { return <Card><CardHeader><CardTitle>{title}</CardTitle></CardHeader><CardContent className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm"><thead><tr className="border-b text-left text-muted-foreground"><th className="pb-3 pr-4">Grupo</th><th className="pb-3 pr-4 text-right">Respondidas</th><th className="pb-3 pr-4 text-right">Corretas</th><th className="pb-3 pr-4 text-right">Incorretas</th><th className="pb-3 text-right">Taxa</th></tr></thead><tbody>{rows.map((item) => <tr key={item.key} className="border-b last:border-0"><td className="py-3 pr-4 font-medium">{item.label}</td><td className="py-3 pr-4 text-right">{item.respondidas}</td><td className="py-3 pr-4 text-right">{item.corretas}</td><td className="py-3 pr-4 text-right">{item.incorretas}</td><td className="py-3 text-right font-semibold">{percent(item.taxaAcerto)}</td></tr>)}</tbody></table></CardContent></Card> }
