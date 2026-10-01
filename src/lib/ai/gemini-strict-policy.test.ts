@@ -55,13 +55,15 @@ test('strict exhaustion never calls configured fallback model', async () => {
 })
 
 test('strict permanent error is structured and stops after one attempt', async () => {
-  await withMockedGemini(() => new Response(JSON.stringify({ error: { message: 'invalid request' } }), { status: 400 }), async (calls) => {
+  await withMockedGemini(() => new Response(JSON.stringify({ error: { message: 'invalid request' }, candidates: [{ finishReason: 'SAFETY' }] }), { status: 400 }), async (calls) => {
     await assert.rejects(generateWithGemini({ prompt: 'private prompt', fallbackPolicy: 'forbid' }), (error: unknown) => {
       assert.ok(error instanceof GeminiGenerationError)
       assert.equal(error.attempts, 1)
       assert.equal(error.requestedModel, 'model-A')
       assert.equal(error.effectiveModel, 'model-A')
       assert.equal(error.fallbackUsed, false)
+      assert.equal(error.httpStatus, 400)
+      assert.equal(error.finishReason, 'SAFETY')
       return true
     })
     assert.equal(calls.length, 1)

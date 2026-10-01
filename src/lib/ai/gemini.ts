@@ -43,14 +43,18 @@ export class GeminiGenerationError extends Error {
   readonly effectiveModel: string
   readonly attempts: number
   readonly fallbackUsed: false
+  readonly httpStatus?: number
+  readonly finishReason?: string
 
-  constructor(message: string, details: Omit<GeminiGenerationTelemetry, 'fallbackUsed'>) {
+  constructor(message: string, details: Omit<GeminiGenerationTelemetry, 'fallbackUsed'> & { httpStatus?: number; finishReason?: string }) {
     super(message)
     this.name = 'GeminiGenerationError'
     this.requestedModel = details.requestedModel
     this.effectiveModel = details.effectiveModel
     this.attempts = details.attempts
     this.fallbackUsed = false
+    this.httpStatus = details.httpStatus
+    this.finishReason = details.finishReason
   }
 }
 
@@ -83,6 +87,8 @@ interface GeminiAttemptResult {
   retryable: boolean
   error?: string
   retryAfterMs?: number
+  httpStatus?: number
+  finishReason?: string
 }
 
 const defaultRetryDependencies: GeminiRetryDependencies = {
@@ -118,6 +124,7 @@ export async function generateWithGemini({
 
   let attempts = 0
   let effectiveModel = configuredModel
+  let lastResult: GeminiAttemptResult | undefined
   for (const model of models) {
     effectiveModel = model
     for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_MODEL; attempt += 1) {
@@ -132,6 +139,7 @@ export async function generateWithGemini({
         onMetadata,
         now: retry.now,
       })
+      lastResult = result
 
       if (result.text) {
         onTelemetry?.({ requestedModel: configuredModel, effectiveModel: model, attempts, fallbackUsed: model !== configuredModel })
@@ -140,7 +148,13 @@ export async function generateWithGemini({
       if (!result.retryable) {
         const message = result.error || 'Falha ao acessar o Gemini.'
         if (fallbackPolicy === 'forbid') {
-          throw new GeminiGenerationError(message, { requestedModel: configuredModel, effectiveModel: model, attempts })
+          throw new GeminiGenerationError(message, {
+            requestedModel: configuredModel,
+            effectiveModel: model,
+            attempts,
+            httpStatus: result.httpStatus,
+            finishReason: result.finishReason,
+          })
         }
         throw new Error(message)
       }
@@ -161,7 +175,13 @@ export async function generateWithGemini({
 
   const message = `Nenhum modelo Gemini conseguiu responder. ${errors.join(' | ')}`
   if (fallbackPolicy === 'forbid') {
-    throw new GeminiGenerationError(message, { requestedModel: configuredModel, effectiveModel, attempts })
+    throw new GeminiGenerationError(message, {
+      requestedModel: configuredModel,
+      effectiveModel,
+      attempts,
+      httpStatus: lastResult?.httpStatus,
+      finishReason: lastResult?.finishReason,
+    })
   }
   throw new Error(message)
 }
@@ -231,6 +251,8 @@ async function tryGenerate({
         retryable: isRetryableError(response.status, message),
         error: sanitizeError(message, { apiKey, prompt }),
         retryAfterMs: parseRetryAfter(response.headers.get('Retry-After'), now()),
+        httpStatus: response.status,
+        finishReason: data?.candidates?.[0]?.finishReason,
       }
     }
 
@@ -243,6 +265,8 @@ async function tryGenerate({
       return {
         retryable: true,
         error: 'Gemini retornou uma resposta vazia.',
+        httpStatus: response.status,
+        finishReason: data?.candidates?.[0]?.finishReason,
       }
     }
 

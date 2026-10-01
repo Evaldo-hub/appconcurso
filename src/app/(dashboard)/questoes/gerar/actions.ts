@@ -11,6 +11,7 @@ import { validateSourceCitationIntegrity } from '@/lib/rag/generated-question'
 import { RagQuestionValidationError, validateRagGeneratedQuestion } from '@/lib/rag/question-validator'
 import { persistApprovedRagQuestion } from '@/lib/rag/question-persistence'
 import { GeminiGenerationError } from '@/lib/ai/gemini'
+import { classifyGeminiGenerationFailure, logStudyRagProviderError } from '@/lib/ai/gemini-provider-diagnostics'
 import { createSubmitStudyAnswer, type AnswerLetter, type StudyAnswerPersistenceResult } from '@/lib/study/submit-study-answer'
 
 async function executeProductionBatch(input: StudyQuestionInput, board: string) {
@@ -31,7 +32,8 @@ async function executeProductionBatch(input: StudyQuestionInput, board: string) 
       generated = await generator({ query, concursoId: input.concurso_id, provaId: input.prova_id, disciplina: input.disciplina, assunto: input.assunto, subassunto: input.subassunto, banca: board, dificuldade: 'media', numeroQuestao: attempt })
     } catch (error) {
       console.info('study_rag_batch', { event: 'generation_result', attempt_number: attempt, passed: false })
-      throw new StudyQuestionAttemptError(error instanceof GeminiGenerationError ? 'PROVIDER_FAILURE' : 'REJECTED')
+      if (error instanceof GeminiGenerationError) logStudyRagProviderError('question_generation', error)
+      throw new StudyQuestionAttemptError(classifyGeminiGenerationFailure(error))
     }
     const citation = validateSourceCitationIntegrity(generated.question)
     console.info('study_rag_batch', { event: 'generation_result', attempt_number: attempt, passed: true, model: generated.generation.model })
@@ -41,7 +43,10 @@ async function executeProductionBatch(input: StudyQuestionInput, board: string) 
 
     let semantic
     try { semantic = await validateRagGeneratedQuestion({ question: generated.question, resolvedSources: generated.resolvedSources }) }
-    catch (error) { throw new StudyQuestionAttemptError(error instanceof RagQuestionValidationError ? 'REJECTED' : 'PROVIDER_FAILURE') }
+    catch (error) {
+      if (!(error instanceof RagQuestionValidationError)) logStudyRagProviderError('semantic_validation', error)
+      throw new StudyQuestionAttemptError(error instanceof RagQuestionValidationError ? 'REJECTED' : 'PROVIDER_FAILURE')
+    }
     console.info('study_rag_batch', { event: 'semantic_result', attempt_number: attempt, verdict: semantic.finalVerdict, model: semantic.validation.model })
     if (semantic.finalVerdict !== 'approved') throw new StudyQuestionAttemptError('REJECTED')
 
