@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { loadRagSelectionCatalog } from '@/lib/study/rag-selection-catalog'
 import { createStudyQuestionFlow, generateStudyQuestionBatch, StudyQuestionAttemptError, type SafeStudyQuestion, type StudyQuestionInput } from '@/lib/study/generate-study-question'
-import { retrieveRagContext } from '@/lib/rag/retrieval'
+import { RagRetrievalError, retrieveRagContext } from '@/lib/rag/retrieval'
 import { createRagGenerationContextBuilder } from '@/lib/rag/generation-context'
 import { createRagQuestionGenerator, generateRagQuestionWithConfiguredGemini } from '@/lib/rag/question-generator'
 import { validateSourceCitationIntegrity } from '@/lib/rag/generated-question'
@@ -17,7 +17,17 @@ import { createSubmitStudyAnswer, type AnswerLetter, type StudyAnswerPersistence
 async function executeProductionBatch(input: StudyQuestionInput, board: string) {
   const query = [input.assunto, input.subassunto].filter(Boolean).join(' — ')
   console.info('study_rag_batch', { event: 'retrieval_started', requested_quantity: input.quantidade, concurso_id: input.concurso_id, prova_id: input.prova_id })
-  const retrieval = await retrieveRagContext({ query, concursoId: input.concurso_id, provaId: input.prova_id, disciplina: input.disciplina, assunto: input.assunto, subassunto: input.subassunto })
+  let retrieval
+  try {
+    retrieval = await retrieveRagContext({ query, concursoId: input.concurso_id, provaId: input.prova_id, disciplina: input.disciplina, assunto: input.assunto, subassunto: input.subassunto })
+  } catch (error) {
+    console.error('study_rag_batch', {
+      event: 'retrieval_failed',
+      error_name: error instanceof Error ? error.name : 'UnknownRetrievalError',
+      message: error instanceof RagRetrievalError ? error.message : 'Retrieval failure without structured diagnostics.',
+    })
+    throw error
+  }
   if (retrieval.matches.length === 0) throw new Error('NO_RAG_CONTEXT')
   if (retrieval.matches.some((source) => source.provaId !== null && source.provaId !== input.prova_id)) throw new Error('INVALID_RETRIEVAL_SCOPE')
   const context = await createRagGenerationContextBuilder(async () => retrieval)({ query, concursoId: input.concurso_id, provaId: input.prova_id })

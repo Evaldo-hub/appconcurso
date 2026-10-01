@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRagRetrievalService, ragCandidateLimit, selectDiverseRagResults } from './retrieval'
-import type { RagEmbeddingProviderClient } from './embeddings'
+import { RagEmbeddingProviderError, type RagEmbeddingProviderClient } from './embeddings'
 import type { RagRetrievalRpcClient } from './retrieval'
 
 const vector = Array(768).fill(0.1)
@@ -209,4 +209,94 @@ test('cenários 7/8 e 11/12 preservam ambos os materiais no Top-K', async () => 
     const result = await dependencies(rows).service({ query: 'teste', concursoId: 7, limit: 3 })
     assert.deepEqual(new Set(result.matches.map((match) => match.materialId)), new Set([primary, revisional]))
   }
+})
+
+test('telemetria registra etapas, dimensoes, candidatos e duracoes sem query ou vetor', async () => {
+  const infoCalls: unknown[][] = []
+  const originalInfo = console.info
+  console.info = (...args: unknown[]) => { infoCalls.push(args) }
+  const times = [100, 112, 200, 219]
+  try {
+    const { embeddings, rpc } = dependencies([validRow])
+    const service = createRagRetrievalService({ embeddings, rpc, now: () => times.shift() ?? 219 })
+    const result = await service({ query: 'consulta privada de teste', concursoId: 7 })
+    assert.equal(result.matches.length, 1)
+  } finally {
+    console.info = originalInfo
+  }
+  assert.deepEqual(infoCalls, [
+    ['study_rag_retrieval', { event: 'query_embedding_started' }],
+    ['study_rag_retrieval', { event: 'query_embedding_finished', dimensions: 768, duration_ms: 12 }],
+    ['study_rag_retrieval', { event: 'rpc_started', rpc: 'match_documents_rag_v2' }],
+    ['study_rag_retrieval', { event: 'rpc_finished', candidate_count: 1, duration_ms: 19 }],
+  ])
+  const serialized = JSON.stringify(infoCalls)
+  assert.doesNotMatch(serialized, /consulta privada de teste/)
+  assert.equal(serialized.includes(JSON.stringify(vector)), false)
+})
+
+test('falha de embedding registra diagnostico seguro e preserva RagRetrievalError', async () => {
+  const query = 'consulta altamente privada'
+  const apiKey = 'AIza12345678901234567890123456789012345'
+  const subject = `projects/segredo/${query}`
+  const errorCalls: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { errorCalls.push(args) }
+  try {
+    const { rpc } = dependencies()
+    const service = createRagRetrievalService({
+      embeddings: {
+        async embed() {
+          throw new RagEmbeddingProviderError(`provider recusou ${query} usando ${apiKey}`, true, 429, {
+            httpStatus: 429, googleCode: 429, googleStatus: 'RESOURCE_EXHAUSTED', googleMessage: `quota para ${query}`,
+            reason: 'RATE_LIMIT_EXCEEDED', retryDelay: '3s', retryAfter: '3',
+            quotaViolations: [{ quotaMetric: 'metric-safe', quotaId: 'id-safe', description: 'quota excedida', subject }],
+          })
+        },
+      },
+      rpc,
+      now: (() => { const values = [10, 25]; return () => values.shift() ?? 25 })(),
+    })
+    await assert.rejects(() => service({ query, concursoId: 7 }), /Falha ao gerar o embedding/)
+  } finally {
+    console.error = originalError
+  }
+  assert.equal(errorCalls.length, 1)
+  assert.equal(errorCalls[0][0], 'study_rag_retrieval_error')
+  assert.deepEqual(errorCalls[0][1], {
+    stage: 'query_embedding', error_name: 'RagEmbeddingProviderError',
+    message: 'provider recusou [QUERY_REDACTED] usando [REDACTED]', retryable: true, http_status: 429,
+    google_code: 429, google_status: 'RESOURCE_EXHAUSTED', google_message: 'quota para [QUERY_REDACTED]',
+    reason: 'RATE_LIMIT_EXCEEDED', retry_delay: '3s', retry_after: '3',
+    quota_violations: [{ quotaMetric: 'metric-safe', quotaId: 'id-safe', description: 'quota excedida' }], duration_ms: 15,
+  })
+  const serialized = JSON.stringify(errorCalls)
+  assert.doesNotMatch(serialized, new RegExp(query))
+  assert.doesNotMatch(serialized, new RegExp(apiKey))
+  assert.doesNotMatch(serialized, /projects\/segredo/)
+})
+
+test('falha da RPC registra mensagem segura e preserva RagRetrievalError', async () => {
+  const query = 'consulta privada rpc'
+  const errorCalls: unknown[][] = []
+  const originalError = console.error
+  console.error = (...args: unknown[]) => { errorCalls.push(args) }
+  try {
+    const { embeddings } = dependencies()
+    const times = [10, 20, 30, 48]
+    const service = createRagRetrievalService({
+      embeddings,
+      rpc: { async rpc() { return { data: null, error: { message: `falhou ${query}` } } } },
+      now: () => times.shift() ?? 48,
+    })
+    await assert.rejects(() => service({ query, concursoId: 7 }), /RPC RAG-V2 retornou erro/)
+  } finally {
+    console.error = originalError
+  }
+  assert.deepEqual(errorCalls, [['study_rag_retrieval_error', {
+    stage: 'match_documents_rpc', error_name: 'RagRpcError', message: 'RPC failure without sensitive details.', duration_ms: 18,
+  }]])
+  const serialized = JSON.stringify(errorCalls)
+  assert.doesNotMatch(serialized, new RegExp(query))
+  assert.equal(serialized.includes(JSON.stringify(vector)), false)
 })
