@@ -18,13 +18,7 @@ services:
         sync: false
       - key: NEXT_PUBLIC_APP_URL
         sync: false
-      - key: NEXT_PUBLIC_AI_GATEWAY
-        value: edge
       - key: NEXT_PUBLIC_TELEGRAM_BOT_USERNAME
-        sync: false
-      - key: N8N_GENERATE_QUESTIONS_WEBHOOK_URL
-        sync: false
-      - key: N8N_API_KEY
         sync: false
       - key: GEMINI_API_KEY
         sync: false

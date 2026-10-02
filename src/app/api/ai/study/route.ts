@@ -5,6 +5,7 @@ import {
   generateStudyContent,
   type StudyAction,
 } from '@/lib/ai/study-question'
+import { buildStudyRagContext } from '@/lib/study/study-rag-context'
 
 const allowedActions = [
   'explicacao',
@@ -26,6 +27,8 @@ interface AuthorizedStudy {
 
 interface QuestionRow {
   id: number
+  concurso_id: number
+  prova_id: number | null
   disciplina: string | null
   assunto: string | null
   subassunto: string | null
@@ -43,6 +46,7 @@ interface QuestionRow {
 export async function POST(
   request: NextRequest,
 ) {
+  let stage = 'request_started'
   try {
     /*
      * 1. Validação da origem
@@ -193,6 +197,11 @@ export async function POST(
         ? input.pergunta.trim()
         : ''
 
+    console.info('study_ai', {
+      event: 'request_started',
+      mode: typeof action === 'string' ? action : 'invalid',
+    })
+
     /*
      * 6. Validação da solicitação
      */
@@ -329,6 +338,8 @@ export async function POST(
         cached: true,
 
         origem: 'cache',
+
+        fontes: [],
       })
     }
 
@@ -343,6 +354,8 @@ export async function POST(
       .from('questoes_estudo')
       .select(`
         id,
+        concurso_id,
+        prova_id,
         disciplina,
         assunto,
         subassunto,
@@ -380,6 +393,33 @@ export async function POST(
     const questao =
       questionRow as QuestionRow
 
+    console.info('study_ai', {
+      event: 'question_loaded',
+      questao_id: questao.id,
+    })
+
+    stage = 'rag_context'
+    const rag = await buildStudyRagContext(admin, {
+      question: {
+        id: questao.id,
+        concurso_id: questao.concurso_id,
+        prova_id: questao.prova_id,
+        disciplina: questao.disciplina,
+        assunto: questao.assunto,
+        subassunto: questao.subassunto,
+        enunciado: questao.enunciado,
+      },
+      action: action as StudyAction,
+      studentQuestion: action === 'pergunta' ? studentQuestion : undefined,
+    })
+
+    console.info('study_ai', {
+      event: 'rag_context_ready',
+      direct_source_count: rag.directSourceCount,
+      supplemental_source_count: rag.supplementalSourceCount,
+      total_source_count: rag.sources.length,
+    })
+
     /*
      * 11. Geração nativa
      *
@@ -391,6 +431,12 @@ export async function POST(
      *
      * Não há chamada ao n8n.
      */
+    stage = 'generation'
+    console.info('study_ai', {
+      event: 'generation_started',
+      provider: 'gemini',
+    })
+
     const generated =
       await generateStudyContent({
         action:
@@ -438,10 +484,17 @@ export async function POST(
           action === 'pergunta'
             ? studentQuestion
             : undefined,
+
+        contexto: rag.contextText || undefined,
       })
 
     const content =
       generated.conteudo
+
+    console.info('study_ai', {
+      event: 'generation_finished',
+      mode: action,
+    })
 
     /*
      * 12. Salva o conteúdo gerado.
@@ -456,7 +509,7 @@ export async function POST(
           questao_id: questionId,
           pergunta: studentQuestion,
           resposta: content,
-          fontes: [],
+          fontes: rag.sources.map(({ titulo, pagina }) => ({ titulo, pagina })),
         })
 
       if (saveError) {
@@ -550,21 +603,39 @@ export async function POST(
 
       origem:
         generated.provider,
+
+      fontes: rag.sources.map(({ titulo, pagina }) => ({ titulo, pagina })),
     })
   } catch (error) {
-    console.error(
-      '[AI Study] Erro:',
-      error,
-    )
+    console.error('study_ai_error', {
+      stage,
+      error_name: error instanceof Error ? error.name : 'UnknownError',
+      message: safeErrorMessage(error),
+    })
 
     return json(
       {
         error:
-          error instanceof Error
-            ? error.message
-            : 'Não foi possível processar a solicitação.',
+          'Não foi possível gerar o conteúdo.',
       },
       500,
     )
   }
+}
+
+function safeErrorMessage(error: unknown) {
+  const raw = error instanceof Error ? error.message : 'Erro desconhecido'
+  let sanitized = raw
+  for (const secret of [
+    process.env.GEMINI_API_KEY,
+    process.env.GROQ_API_KEY,
+    process.env.SUPABASE_SECRET_KEY,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+  ]) {
+    if (secret) sanitized = sanitized.replaceAll(secret, '[REDACTED]')
+  }
+  return sanitized
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[REDACTED]')
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .slice(0, 750)
 }

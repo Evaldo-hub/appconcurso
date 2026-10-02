@@ -32,6 +32,12 @@ test('prompt de resumo usa linguagem simples, resolução curta e quatro seçõe
   assert.doesNotMatch(prompt, /Produza uma AULA COMPLETA/)
 })
 
+test('contexto RAG é passado ao prompt sem serialização', () => {
+  const prompt = buildStudyPrompt({ action: 'resumo', questao, contexto: 'Fonte: Manual\nTrecho confirmado.' })
+  assert.match(prompt, /CONTEXTO DE APOIO:\nFonte: Manual\nTrecho confirmado/)
+  assert.match(prompt, /Não invente informações que contrariem o contexto/)
+})
+
 test('prompt de resumo exige consistência, não força gabarito e limita pegadinhas e tabelas', () => {
   const prompt = buildStudyPrompt({ action: 'resumo', questao })
   assert.match(prompt, /cada conclusão decorre da etapa imediatamente anterior/)
