@@ -13,9 +13,17 @@ import {
 } from './admin-material-upload'
 
 const rawMetadata = {
-  titulo: 'Material de revisão', prova_id: '', disciplina: 'Direito Constitucional', assunto: '', subassunto: '', categoria: 'documentos_gerais',
+  titulo: 'Material de revisão', prova_id: '', disciplina: 'Direito Constitucional', assunto: '', subassunto: '', categoria: 'documentos_gerais', categoria_documental: 'NORMA_OFICIAL',
 } as const
 const metadata = ragMaterialUploadMetadataSchema.parse(rawMetadata)
+
+test('upload exige categoria documental válida no servidor', () => {
+  const { categoria_documental: _category, ...withoutCategory } = rawMetadata
+  assert.equal(_category, 'NORMA_OFICIAL')
+  assert.equal(ragMaterialUploadMetadataSchema.safeParse(withoutCategory).success, false)
+  assert.equal(ragMaterialUploadMetadataSchema.safeParse({ ...rawMetadata, categoria_documental: 'INVALIDA' }).success, false)
+  assert.equal(ragMaterialUploadMetadataSchema.parse({ ...rawMetadata, categoria_documental: 'EDITAL' }).categoria_documental, 'EDITAL')
+})
 
 function file(name: string, content: string | Uint8Array, type: string): RagUploadFile {
   const bytes = typeof content === 'string' ? new TextEncoder().encode(content) : content
@@ -60,6 +68,7 @@ test('PDF válido realiza uma escrita GitHub e um insert de material, sem opera�
   assert.equal(state.githubWrites.length, 1)
   assert.equal(state.inserted.length, 1)
   assert.equal(state.inserted[0]?.arquivo_origem, 'Revisão.pdf')
+  assert.equal(state.inserted[0]?.categoria_documental, 'NORMA_OFICIAL')
   assert.deepEqual(Object.keys(state.dependencies).sort(), ['github', 'loadContestContext', 'registration'])
 })
 

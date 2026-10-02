@@ -1,5 +1,16 @@
 export type RagEmbeddingProvider = 'google'
 export type RagSupportedFileType = 'pdf' | 'txt' | 'md'
+export const RAG_DOCUMENT_CATEGORIES = [
+  'EDITAL',
+  'NORMA_OFICIAL',
+  'MANUAL_OFICIAL',
+  'DOCUMENTACAO_TECNICA_OFICIAL',
+  'PROVA_ANTERIOR',
+  'MATERIAL_EXPLICATIVO',
+  'OUTRO',
+] as const
+export type RagDocumentCategory = typeof RAG_DOCUMENT_CATEGORIES[number]
+export type RagQueryIntent = 'CERTAME' | 'CONHECIMENTO'
 
 export interface RagMaterial {
   id: number
@@ -137,6 +148,8 @@ export interface RagRetrievalMatch {
   assunto: string | null
   subassunto: string | null
   embeddingModel: string
+  documentCategory?: RagDocumentCategory
+  categoryPriority?: number
 }
 
 export interface RagRetrievalResult {

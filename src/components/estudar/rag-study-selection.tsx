@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { RagSelectionCatalog } from '@/lib/study/rag-selection-catalog'
+import { listarAssuntosDaProva, listarDisciplinasDaProva, listarSubassuntosDaProva } from '@/lib/contest-catalog/selection'
 import { canSubmitStudySelection, initialRagStudySelection, selectContest, selectDiscipline, selectExam, selectSubject } from '@/lib/study/rag-selection-state'
 import { generateStudyQuestionAction, submitStudyAnswerAction } from '@/app/(dashboard)/questoes/gerar/actions'
 import type { SafeStudyQuestion, StudyFlowErrorCode, StudyQuestionBatchResult } from '@/lib/study/generate-study-question'
@@ -23,13 +24,11 @@ export function RagStudySelection({ catalog, error }: { catalog: RagSelectionCat
   const [currentIndex, setCurrentIndex] = useState(0)
   const [answers, setAnswers] = useState<Record<number, StudyAnswerState>>({})
   const exams = useMemo(() => catalog.exams.filter((exam) => String(exam.contestId) === selection.contestId), [catalog.exams, selection.contestId])
-  const scopedTaxonomy = useMemo(() => catalog.taxonomy.filter((item) =>
-    String(item.contestId) === selection.contestId
-    && (item.examId === null || String(item.examId) === selection.examId)), [catalog.taxonomy, selection.contestId, selection.examId])
-  const disciplines = unique(scopedTaxonomy.map((item) => item.discipline))
-  const subjects = unique(scopedTaxonomy.filter((item) => item.discipline === selection.discipline).map((item) => item.subject))
-  const subsubjects = unique(scopedTaxonomy.filter((item) =>
-    item.discipline === selection.discipline && item.subject === selection.subject).map((item) => item.subsubject))
+  const selectedExamId = Number(selection.examId)
+  const disciplines = Number.isSafeInteger(selectedExamId) ? listarDisciplinasDaProva(catalog, selectedExamId) : []
+  const subjects = Number.isSafeInteger(selectedExamId) && selection.discipline ? listarAssuntosDaProva(catalog, selectedExamId, selection.discipline) : []
+  const subsubjects = Number.isSafeInteger(selectedExamId) && selection.discipline && selection.subject
+    ? listarSubassuntosDaProva(catalog, selectedExamId, selection.discipline, selection.subject) : []
   const canSubmit = canSubmitStudySelection(selection, pending) && !error
 
   const generateQuestion = async () => {
@@ -61,7 +60,7 @@ export function RagStudySelection({ catalog, error }: { catalog: RagSelectionCat
         <CardContent className="space-y-5">
           <div className="grid gap-4 md:grid-cols-2">
             <SelectionField id="rag-contest" label="Concurso" value={selection.contestId} onChange={(value) => { setSelection((current) => selectContest(current, value)); setBatch(null) }} options={catalog.contests.map((item) => ({ value: String(item.id), label: `${item.name}${item.year ? ` — ${item.year}` : ''}` }))} placeholder={catalog.contests.length ? 'Selecione o concurso' : 'Nenhum concurso disponível'} disabled={Boolean(error) || catalog.contests.length === 0 || pending} />
-            <SelectionField id="rag-exam" label="Prova" value={selection.examId} onChange={(value) => { setSelection((current) => selectExam(current, value)); setBatch(null) }} options={exams.map((item) => ({ value: String(item.id), label: item.name }))} placeholder={!selection.contestId ? 'Selecione primeiro o concurso' : exams.length ? 'Selecione a prova' : 'Nenhuma prova disponível'} disabled={!selection.contestId || exams.length === 0 || pending} />
+            <SelectionField id="rag-exam" label="Prova" value={selection.examId} onChange={(value) => { setSelection((current) => selectExam(current, value)); setBatch(null) }} options={exams.map((item) => ({ value: String(item.id), label: [item.code, item.role, item.specialty].filter(Boolean).join(' — ') }))} placeholder={!selection.contestId ? 'Selecione primeiro o concurso' : exams.length ? 'Selecione a prova' : 'Nenhuma prova disponível'} disabled={!selection.contestId || exams.length === 0 || pending} />
             <SelectionField id="rag-discipline" label="Disciplina" value={selection.discipline} onChange={(value) => { setSelection((current) => selectDiscipline(current, value)); setBatch(null) }} options={disciplines.map(toOption)} placeholder={!selection.examId ? 'Selecione primeiro a prova' : disciplines.length ? 'Selecione a disciplina' : 'Nenhuma disciplina disponível'} disabled={!selection.examId || disciplines.length === 0 || pending} />
             <SelectionField id="rag-subject" label="Assunto" value={selection.subject} onChange={(value) => { setSelection((current) => selectSubject(current, value)); setBatch(null) }} options={subjects.map(toOption)} placeholder={!selection.discipline ? 'Selecione primeiro a disciplina' : subjects.length ? 'Selecione o assunto' : 'Nenhum assunto disponível'} disabled={!selection.discipline || subjects.length === 0 || pending} />
             <SelectionField id="rag-subsubject" label="Subassunto" value={selection.subsubject} onChange={(value) => setSelection((current) => ({ ...current, subsubject: value }))} options={subsubjects.map(toOption)} placeholder={!selection.subject ? 'Selecione primeiro o assunto' : subsubjects.length ? 'Todos os subassuntos' : 'Sem subassunto específico'} disabled={!selection.subject || subsubjects.length === 0} />
@@ -80,10 +79,6 @@ export function RagStudySelection({ catalog, error }: { catalog: RagSelectionCat
 
 function SelectionField({ id, label, value, onChange, options, placeholder, disabled = false }: { id: string; label: string; value: string; onChange: (value: string) => void; options: Option[]; placeholder: string; disabled?: boolean }) {
   return <div className="space-y-2"><label htmlFor={id} className="text-sm font-medium">{label}</label><select id={id} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"><option value="">{placeholder}</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
-}
-
-function unique(values: Array<string | null>) {
-  return [...new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value)))].sort((left, right) => left.localeCompare(right, 'pt-BR'))
 }
 
 function toOption(value: string): Option { return { value, label: value } }

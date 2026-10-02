@@ -22,6 +22,8 @@ const validRow = {
   ingestion_id: 2,
   embedding_model: 'gemini-embedding-2',
   similarity: 0.7,
+  categoria_documental: 'OUTRO',
+  category_priority: 3,
 }
 
 function dependencies(data: unknown = [validRow]) {
@@ -71,11 +73,11 @@ test('retrieval rejeita limites e thresholds fora da faixa', async () => {
   await assert.rejects(() => service({ query: 'teste', concursoId: 7, threshold: 1.1 }), /threshold/)
 })
 
-test('retrieval gera RETRIEVAL_QUERY e chama somente match_documents_rag_v2 com filtros', async () => {
+test('retrieval gera RETRIEVAL_QUERY e chama a RPC classificada com filtros', async () => {
   const { service, embeddingCalls, rpcCalls } = dependencies([])
   await service({ query: ' consulta ', concursoId: 7, provaId: 3, disciplina: 'Direito', assunto: 'Ato', subassunto: 'Prazo' })
   assert.deepEqual(embeddingCalls[0], [{ content: 'consulta', taskType: 'RETRIEVAL_QUERY' }])
-  assert.equal(rpcCalls[0].name, 'match_documents_rag_v2')
+  assert.equal(rpcCalls[0].name, 'match_documents_rag_v2_classified')
   assert.deepEqual(rpcCalls[0].parameters, {
     p_query_embedding: vector,
     p_concurso_id: 7,
@@ -85,6 +87,7 @@ test('retrieval gera RETRIEVAL_QUERY e chama somente match_documents_rag_v2 com 
     p_disciplina: 'Direito',
     p_assunto: 'Ato',
     p_subassunto: 'Prazo',
+    p_query_intent: 'CONHECIMENTO',
   })
 })
 
@@ -166,6 +169,7 @@ test('document_id duplicado mantém somente a ocorrência de maior similarity', 
     arquivoOrigem: row.arquivo_origem, githubPath: row.github_path, pagina: row.pagina,
     chunkIndex: row.chunk_index, disciplina: row.disciplina, assunto: row.assunto,
     subassunto: row.subassunto, embeddingModel: row.embedding_model,
+    documentCategory: row.categoria_documental, categoryPriority: row.category_priority,
   }))
   const result = selectDiverseRagResults(parsed, 5)
   assert.deepEqual(result.map((match) => [match.documentId, match.similarity]), [[1, 0.95], [2, 0.90]])
@@ -193,6 +197,7 @@ test('limites finais 1, 3 e 5 nunca são excedidos', () => {
     documentId: index + 1, materialId: index + 1, ingestionId: 2, concursoId: 7, provaId: null,
     content: 'x', similarity: 0.9 - index / 100, arquivoOrigem: null, githubPath: 'x.pdf', pagina: 1,
     chunkIndex: index, disciplina: null, assunto: null, subassunto: null, embeddingModel: 'gemini-embedding-2',
+    documentCategory: 'OUTRO' as const, categoryPriority: 3,
   }))
   for (const limit of [1, 3, 5]) assert.equal(selectDiverseRagResults(rows, limit).length, limit)
 })
@@ -227,7 +232,7 @@ test('telemetria registra etapas, dimensoes, candidatos e duracoes sem query ou 
   assert.deepEqual(infoCalls, [
     ['study_rag_retrieval', { event: 'query_embedding_started' }],
     ['study_rag_retrieval', { event: 'query_embedding_finished', dimensions: 768, duration_ms: 12 }],
-    ['study_rag_retrieval', { event: 'rpc_started', rpc: 'match_documents_rag_v2' }],
+    ['study_rag_retrieval', { event: 'rpc_started', rpc: 'match_documents_rag_v2_classified', query_intent: 'CONHECIMENTO' }],
     ['study_rag_retrieval', { event: 'rpc_finished', candidate_count: 1, duration_ms: 19 }],
   ])
   const serialized = JSON.stringify(infoCalls)

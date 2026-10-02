@@ -97,6 +97,7 @@ export async function uploadAndRegisterRagMaterial(
     arquivo_origem: validatedFile.fileName,
     github_path: githubPath,
     tipo_arquivo: validatedFile.fileType,
+    categoria_documental: metadata.categoria_documental,
   }
   await validateRagMaterialRegistration(dependencies.registration, concursoId, registrationInput)
 

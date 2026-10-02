@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
   ragMaterialBrowserInputSchema,
@@ -21,6 +22,7 @@ const rawInput = {
   arquivo_origem: ' Constituição.pdf ',
   github_path: '  concursos/trt8/2022/documentos_gerais/D. Const/Constituição.pdf  ',
   tipo_arquivo: 'pdf',
+  categoria_documental: 'EDITAL',
 }
 
 function repository(overrides: Partial<RagMaterialRegistrationRepository> = {}) {
@@ -41,6 +43,25 @@ test('aceita input válido, preserva Unicode e aplica trim sem transformar o pat
   assert.equal(result.github_path, 'concursos/trt8/2022/documentos_gerais/D. Const/Constituição.pdf')
   assert.equal(result.disciplina, 'Direito Constitucional')
   assert.equal(result.prova_id, null)
+  assert.equal(result.categoria_documental, 'EDITAL')
+})
+
+test('categoria documental é obrigatória e validada no servidor', () => {
+  const { categoria_documental: _category, ...withoutCategory } = rawInput
+  assert.equal(_category, 'EDITAL')
+  assert.equal(ragMaterialBrowserInputSchema.safeParse(withoutCategory).success, false)
+  assert.equal(ragMaterialBrowserInputSchema.safeParse({ ...rawInput, categoria_documental: '' }).success, false)
+  assert.equal(ragMaterialBrowserInputSchema.safeParse({ ...rawInput, categoria_documental: 'NAO_PERMITIDA' }).success, false)
+  assert.equal(ragMaterialBrowserInputSchema.parse({ ...rawInput, categoria_documental: 'NORMA_OFICIAL' }).categoria_documental, 'NORMA_OFICIAL')
+})
+
+test('formulário exige seleção explícita e oferece os valores exatos do banco', async () => {
+  const source = await readFile('src/app/(dashboard)/admin/concursos/[id]/new-rag-material-form.tsx', 'utf8')
+  assert.match(source, /name="categoria_documental"[^>]*defaultValue=""[^>]*required/)
+  assert.match(source, /<option value="" disabled>Selecione a categoria<\/option>/)
+  for (const category of ['EDITAL', 'NORMA_OFICIAL', 'MANUAL_OFICIAL', 'DOCUMENTACAO_TECNICA_OFICIAL', 'PROVA_ANTERIOR', 'MATERIAL_EXPLICATIVO', 'OUTRO']) {
+    assert.match(source, new RegExp(`<option value="${category}">`))
+  }
 })
 
 test('rejeita campo obrigatório vazio e paths claramente inválidos', () => {

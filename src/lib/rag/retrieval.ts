@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { RAG_CONFIG, getRagServerConfig } from './config'
 import { createGoogleEmbeddingClient, RagEmbeddingProviderError, type RagEmbeddingProviderClient } from './embeddings'
 import { normalizeRetrievalInput } from './retrieve'
-import type { RagRetrievalInput, RagRetrievalMatch, RagRetrievalResult } from './types'
+import { RAG_DOCUMENT_CATEGORIES, type RagDocumentCategory, type RagQueryIntent, type RagRetrievalInput, type RagRetrievalMatch, type RagRetrievalResult } from './types'
 
 interface RagRpcError { message?: string }
 
@@ -27,6 +27,12 @@ export class RagRetrievalError extends Error {
 
 export const RAG_CANDIDATE_MULTIPLIER = 4
 export const RAG_MAX_CANDIDATE_LIMIT = 50
+
+const CERTAME_QUERY = /\b(edital|concurso|certame|inscri(?:ç|c)[aã]o|cargo|vaga|cota|prova|data|cronograma|peso|conte[uú]do program[aá]tico|requisito|remunera(?:ç|c)[aã]o|local de aplica(?:ç|c)[aã]o)\b/iu
+
+export function classifyRagQueryIntent(query: string): RagQueryIntent {
+  return CERTAME_QUERY.test(query.normalize('NFC')) ? 'CERTAME' : 'CONHECIMENTO'
+}
 
 const DIAGNOSTIC_TEXT_LIMIT = 750
 
@@ -86,7 +92,7 @@ export function ragCandidateLimit(finalLimit: number) {
   return Math.min(finalLimit * RAG_CANDIDATE_MULTIPLIER, RAG_MAX_CANDIDATE_LIMIT)
 }
 
-export function selectDiverseRagResults<T extends { documentId: number; materialId: number | null; similarity: number }>(candidates: readonly T[], limit: number): T[] {
+export function selectDiverseRagResults<T extends { documentId: number; materialId: number | null; similarity: number; categoryPriority?: number }>(candidates: readonly T[], limit: number): T[] {
   if (!Number.isSafeInteger(limit) || limit < 1) return []
   const byDocument = new Map<number, { match: T; position: number }>()
   candidates.forEach((match, position) => {
@@ -94,7 +100,7 @@ export function selectDiverseRagResults<T extends { documentId: number; material
     if (!current || match.similarity > current.match.similarity) byDocument.set(match.documentId, { match, position })
   })
   const ranked = [...byDocument.values()]
-    .sort((a, b) => b.match.similarity - a.match.similarity || a.position - b.position)
+    .sort((a, b) => (a.match.categoryPriority ?? 0) - (b.match.categoryPriority ?? 0) || b.match.similarity - a.match.similarity || a.position - b.position)
     .map(({ match }) => match)
   const selected: T[] = []
   const selectedDocuments = new Set<number>()
@@ -115,7 +121,7 @@ export function selectDiverseRagResults<T extends { documentId: number; material
       if (selected.length === limit) break
     }
   }
-  return selected.sort((a, b) => b.similarity - a.similarity)
+  return selected.sort((a, b) => (a.categoryPriority ?? 0) - (b.categoryPriority ?? 0) || b.similarity - a.similarity)
 }
 
 function positiveInteger(value: unknown) {
@@ -124,6 +130,10 @@ function positiveInteger(value: unknown) {
 
 function nullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string'
+}
+
+function documentCategory(value: unknown): value is RagDocumentCategory {
+  return typeof value === 'string' && (RAG_DOCUMENT_CATEGORIES as readonly string[]).includes(value)
 }
 
 function parseRpcRow(value: unknown): RagRetrievalMatch | null {
@@ -142,6 +152,8 @@ function parseRpcRow(value: unknown): RagRetrievalMatch | null {
     && nullableString(row.arquivo_origem)
     && typeof row.github_path === 'string' && row.github_path.length > 0
     && row.embedding_model === RAG_CONFIG.embedding.model
+    && documentCategory(row.categoria_documental)
+    && typeof row.category_priority === 'number' && Number.isSafeInteger(row.category_priority) && row.category_priority >= 0
   if (!valid) throw new RagRetrievalError('A RPC RAG-V2 retornou campos essenciais inválidos ou incompatíveis.')
   if (!positiveInteger(row.material_id)) return null
 
@@ -161,12 +173,15 @@ function parseRpcRow(value: unknown): RagRetrievalMatch | null {
     arquivoOrigem: row.arquivo_origem as string | null,
     githubPath: row.github_path as string,
     embeddingModel: row.embedding_model as string,
+    documentCategory: row.categoria_documental as RagDocumentCategory,
+    categoryPriority: row.category_priority as number,
   }
 }
 
 export function createRagRetrievalService(dependencies: RagRetrievalDependencies) {
   return async function retrieveRagContext(input: RagRetrievalInput): Promise<RagRetrievalResult> {
     const normalized = normalizeRetrievalInput(input)
+    const queryIntent = classifyRagQueryIntent(normalized.query)
     const now = dependencies.now ?? Date.now
     let queryEmbedding
     const embeddingStartedAt = now()
@@ -187,9 +202,9 @@ export function createRagRetrievalService(dependencies: RagRetrievalDependencies
 
     let response: { data: unknown; error: RagRpcError | null }
     const rpcStartedAt = now()
-    console.info('study_rag_retrieval', { event: 'rpc_started', rpc: 'match_documents_rag_v2' })
+    console.info('study_rag_retrieval', { event: 'rpc_started', rpc: 'match_documents_rag_v2_classified', query_intent: queryIntent })
     try {
-      response = await dependencies.rpc.rpc('match_documents_rag_v2', {
+      response = await dependencies.rpc.rpc('match_documents_rag_v2_classified', {
         p_query_embedding: queryEmbedding.values,
         p_concurso_id: normalized.concursoId,
         p_prova_id: normalized.provaId,
@@ -198,6 +213,7 @@ export function createRagRetrievalService(dependencies: RagRetrievalDependencies
         p_disciplina: normalized.disciplina ?? null,
         p_assunto: normalized.assunto ?? null,
         p_subassunto: normalized.subassunto ?? null,
+        p_query_intent: queryIntent,
       })
     } catch (error) {
       logRpcError(error, durationMs(rpcStartedAt, now))

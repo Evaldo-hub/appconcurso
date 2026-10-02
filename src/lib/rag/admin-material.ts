@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { RAG_DOCUMENT_CATEGORIES } from './types'
 
 const optionalText = (maximum: number) => z.string().trim().max(maximum).transform((value) => value || null)
 const githubPathSchema = z.string().trim().min(1).max(2000).refine((value) => {
@@ -24,6 +25,7 @@ export const ragMaterialBrowserInputSchema = z.object({
   arquivo_origem: optionalText(500),
   github_path: githubPathSchema,
   tipo_arquivo: z.enum(['pdf', 'txt', 'md']),
+  categoria_documental: z.enum(RAG_DOCUMENT_CATEGORIES),
 })
 
 export type RagMaterialBrowserInput = z.input<typeof ragMaterialBrowserInputSchema>

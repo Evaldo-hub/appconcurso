@@ -116,9 +116,9 @@ class QuestoesService {
   }
 
   async getQuestionCatalog(concursoId: string, provaId: string): Promise<QuestionCatalogEntry[]> {
-    const { data, error } = await this.supabase
-      .from('conteudo_programatico')
-      .select('concurso_id, prova_id, disciplina, assunto, subassunto, ordem, disciplina_ordem, assunto_ordem, subassunto_ordem')
+    const { data: links, error: linksError } = await this.supabase
+      .from('prova_conteudos')
+      .select('concurso_id, prova_id, conteudo_id, ordem, disciplina_ordem, assunto_ordem, subassunto_ordem')
       .eq('concurso_id', concursoId)
       .eq('prova_id', provaId)
       .eq('ativo', true)
@@ -127,19 +127,33 @@ class QuestoesService {
       .order('subassunto_ordem', { ascending: true, nullsFirst: true })
       .range(0, 9999)
 
-    if (error) throw new Error('Não foi possível carregar o catálogo do banco de questões.')
+    if (linksError) throw new Error('Não foi possível carregar o catálogo do banco de questões.')
+    const contentIds = [...new Set((links ?? []).map((item) => Number(item.conteudo_id)))]
+    if (contentIds.length === 0) return []
+    const { data: contents, error: contentsError } = await this.supabase
+      .from('conteudos_catalogo')
+      .select('id, concurso_id, disciplina, assunto, subassunto')
+      .eq('concurso_id', concursoId)
+      .eq('ativo', true)
+      .in('id', contentIds)
+    if (contentsError) throw new Error('Não foi possível carregar o catálogo do banco de questões.')
+    const contentById = new Map((contents ?? []).map((item) => [Number(item.id), item]))
 
-    return (data ?? []).map<QuestionCatalogEntry>((item) => ({
+    return (links ?? []).flatMap<QuestionCatalogEntry>((item) => {
+      const content = contentById.get(Number(item.conteudo_id))
+      if (!content || String(content.concurso_id) !== String(item.concurso_id)) return []
+      return [{
         concursoId: String(item.concurso_id),
         provaId: String(item.prova_id),
-        disciplina: item.disciplina,
-        assunto: item.assunto,
-        subassunto: item.subassunto,
+        disciplina: content.disciplina,
+        assunto: content.assunto,
+        subassunto: content.subassunto,
         ordem: item.ordem,
         disciplinaOrdem: item.disciplina_ordem,
         assuntoOrdem: item.assunto_ordem,
         subassuntoOrdem: item.subassunto_ordem,
-      }))
+      }]
+    })
   }
 
   async getFilterOptions(): Promise<QuestionFilterOptions> {

@@ -84,7 +84,7 @@ const flow = createStudyQuestionFlow({
     const result = await loadRagSelectionCatalog(); if (result.error) return { valid: false, board: '' }
     const contest = result.catalog.contests.find((item) => item.id === input.concurso_id)
     const examValid = result.catalog.exams.some((item) => item.id === input.prova_id && item.contestId === input.concurso_id)
-    const taxonomyValid = result.catalog.taxonomy.some((item) => item.contestId === input.concurso_id && (item.examId === null || item.examId === input.prova_id) && item.discipline === input.disciplina && item.subject === input.assunto && (input.subassunto === null || item.subsubject === input.subassunto))
+    const taxonomyValid = result.catalog.taxonomy.some((item) => item.contestId === input.concurso_id && item.examId === input.prova_id && item.discipline === input.disciplina && item.subject === input.assunto && (input.subassunto === null || item.subsubject === input.subassunto))
     return { valid: Boolean(contest && examValid && taxonomyValid), board: contest?.board ?? '' }
   },
   executeBatch: executeProductionBatch,

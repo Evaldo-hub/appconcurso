@@ -81,6 +81,7 @@ export async function saveRagMaterialAction(routeConcursoId: number, formData: F
     arquivo_origem: formData.get('arquivo_origem'),
     github_path: formData.get('github_path'),
     tipo_arquivo: formData.get('tipo_arquivo'),
+    categoria_documental: formData.get('categoria_documental'),
   })
   if (!parsed.success || !Number.isSafeInteger(routeConcursoId) || routeConcursoId < 1) {
     redirect(`/admin/concursos/${routeConcursoId}?material_status=invalid`)
@@ -106,6 +107,7 @@ export async function uploadRagMaterialAction(routeConcursoId: number, formData:
   const metadata = ragMaterialUploadMetadataSchema.safeParse({
     titulo: formData.get('titulo'), prova_id: formData.get('prova_id'), disciplina: formData.get('disciplina'),
     assunto: formData.get('assunto'), subassunto: formData.get('subassunto'), categoria: formData.get('categoria'),
+    categoria_documental: formData.get('categoria_documental'),
   })
   const file = formData.get('arquivo')
   if (!metadata.success || !(file instanceof File) || !Number.isSafeInteger(routeConcursoId) || routeConcursoId < 1) {
