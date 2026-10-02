@@ -75,3 +75,20 @@ test('sem fontes retorna contexto vazio de forma controlada', async () => {
   const result = await build({ question, action: 'resumo' })
   assert.deepEqual(result, { contextText: '', sources: [], directSourceCount: 0, supplementalSourceCount: 0 })
 })
+
+test('mapa mental reutiliza complemento semântico RAG V2 escopado', async () => {
+  let calls = 0
+  const build = createStudyRagContextBuilder({
+    loadDirect: async () => validData,
+    retrieve: async (input) => {
+      calls += 1
+      assert.equal(input.concursoId, question.concurso_id)
+      assert.equal(input.provaId, question.prova_id)
+      assert.equal(input.assunto, question.assunto)
+      return { matches: [] }
+    },
+  })
+  const result = await build({ question, action: 'mapa_mental' })
+  assert.equal(calls, 1)
+  assert.equal(result.directSourceCount, 1)
+})

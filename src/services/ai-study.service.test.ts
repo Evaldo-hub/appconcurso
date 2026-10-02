@@ -21,7 +21,7 @@ test('todos os modos de estudo usam exclusivamente /api/ai/study', async () => {
   }
 
   try {
-    const modes: AiStudyAction[] = ['explicacao', 'resumo', 'aula', 'pergunta']
+    const modes: AiStudyAction[] = ['explicacao', 'resumo', 'aula', 'mapa_mental', 'pergunta']
     for (const mode of modes) await aiStudyService.studyQuestion('42', mode, mode === 'pergunta' ? 'Dúvida' : undefined)
     assert.deepEqual(calls.map((call) => call.url), modes.map(() => '/api/ai/study'))
     assert.deepEqual(calls.map((call) => call.body.acao), modes)

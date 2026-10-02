@@ -4,7 +4,7 @@ import { extractStudyOutline, formatLatexExpression, parseStudyMarkdown, section
 
 interface StudyMarkdownProps {
   content: string
-  mode?: 'explicacao' | 'resumo' | 'aula' | 'perguntar'
+  mode?: 'explicacao' | 'resumo' | 'aula' | 'mapa_mental' | 'perguntar'
 }
 
 const inlinePattern = /(\\\([\s\S]*?\\\)|\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g
@@ -28,6 +28,10 @@ export function outlineLabel(text: string): string {
 }
 
 export function StudyMarkdown({ content, mode = 'explicacao' }: StudyMarkdownProps) {
+  if (mode === 'mapa_mental') {
+    return <pre className="mx-auto w-full max-w-4xl whitespace-pre-wrap break-words rounded-xl border bg-muted/20 p-4 font-mono text-sm leading-7 text-foreground/90 sm:p-6 sm:text-base">{content}</pre>
+  }
+
   const blocks = parseStudyMarkdown(content)
   const outline = mode === 'aula' ? extractStudyOutline(blocks) : []
 

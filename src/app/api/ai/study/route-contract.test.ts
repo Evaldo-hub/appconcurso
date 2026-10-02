@@ -22,6 +22,13 @@ test('rota usa contexto RAG nativo e não referencia Edge Function ou n8n', asyn
   assert.doesNotMatch(source, /functions\.invoke|N8N_|webhook/i)
 })
 
+test('backend aceita mapa_mental, retorna fontes e evita persistência sem suporte de schema', async () => {
+  const source = await readFile(routeUrl, 'utf8')
+  assert.match(source, /'mapa_mental'/)
+  assert.match(source, /fontes: rag\.sources/)
+  assert.match(source, /else if \(action !== 'mapa_mental'\)/)
+})
+
 test('rota não devolve detalhes técnicos de provider ao navegador', async () => {
   const source = await readFile(routeUrl, 'utf8')
   assert.match(source, /'Não foi possível gerar o conteúdo\.'/)

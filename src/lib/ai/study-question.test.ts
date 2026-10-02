@@ -38,6 +38,23 @@ test('contexto RAG é passado ao prompt sem serialização', () => {
   assert.match(prompt, /Não invente informações que contrariem o contexto/)
 })
 
+test('mapa mental usa prompt exclusivo, fontes e hierarquia textual', () => {
+  const prompt = buildStudyPrompt({ action: 'mapa_mental', questao, contexto: 'Fonte: Manual\nConteúdo confirmado.' })
+  assert.match(prompt, /MAPA MENTAL textual/)
+  assert.match(prompt, /exclusivamente o conteúdo sustentado pelo CONTEXTO DE APOIO/)
+  assert.match(prompt, /├── RAMO 1/)
+  assert.match(prompt, /└── RAMO FINAL/)
+  assert.match(prompt, /O QUE MEMORIZAR PARA A PROVA/)
+  assert.match(prompt, /de 3 a 7 pontos objetivos/)
+  assert.doesNotMatch(prompt, /Produza um RESUMO DE REVISÃO RÁPIDA/)
+  assert.doesNotMatch(prompt, /Produza uma AULA COMPLETA/)
+})
+
+test('normalização preserva caracteres, quebras e indentação do mapa mental', () => {
+  const tree = 'TEMA CENTRAL\n│\n├── RAMO\n│   └── Conceito\n└── FINAL'
+  assert.equal(normalizeStudyContent(`\n${tree}\n`), tree)
+})
+
 test('prompt de resumo exige consistência, não força gabarito e limita pegadinhas e tabelas', () => {
   const prompt = buildStudyPrompt({ action: 'resumo', questao })
   assert.match(prompt, /cada conclusão decorre da etapa imediatamente anterior/)

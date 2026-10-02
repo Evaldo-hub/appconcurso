@@ -12,6 +12,7 @@ import {
   Library,
   Lightbulb,
   Loader2,
+  Network,
   Send,
   Sparkles,
 } from 'lucide-react'
@@ -28,6 +29,7 @@ const modes: Array<{ value: StudyMode; label: string; description: string; icon:
   { value: 'explicacao', label: 'Explicação rápida', description: 'Entenda rapidamente por que a resposta está correta.', icon: Lightbulb },
   { value: 'resumo', label: 'Resumo', description: 'Revisão objetiva do conteúdo cobrado nesta questão.', icon: FileText },
   { value: 'aula', label: 'Aula completa', description: 'Estudo aprofundado do assunto da questão.', icon: GraduationCap },
+  { value: 'mapa_mental', label: 'Mapa mental', description: 'Visualize os conceitos e relações essenciais do tema.', icon: Network },
   { value: 'perguntar', label: 'Perguntar à IA', description: 'Tire dúvidas específicas sobre esta questão.', icon: Bot },
 ]
 
@@ -42,6 +44,7 @@ const generatingLabel: Record<Exclude<StudyMode, 'perguntar'>, string> = {
   explicacao: 'Gerando explicação...',
   resumo: 'Gerando resumo...',
   aula: 'Preparando aula completa...',
+  mapa_mental: 'Criando mapa mental...',
 }
 
 export default function EstudarQuestaoPage() {
@@ -85,8 +88,8 @@ export default function EstudarQuestaoPage() {
       </CardContent>
     </Card>
 
-    <nav aria-label="Modos de estudo" className="-mx-1 overflow-x-auto px-1 pb-1">
-      <div role="tablist" className="grid min-w-[42rem] grid-cols-4 gap-2 sm:min-w-0">
+    <nav aria-label="Modos de estudo">
+      <div role="tablist" className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5">
         {modes.map(({ value, label, icon: Icon }) => <button
           key={value}
           id={`study-tab-${value}`}
@@ -142,7 +145,7 @@ function StudyPageSkeleton() {
     <Skeleton className="h-9 w-40" />
     <div className="space-y-2"><Skeleton className="h-4 w-64" /><Skeleton className="h-9 w-72" /></div>
     <Skeleton className="h-36 w-full" />
-    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /></div>
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5"><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /><Skeleton className="h-14" /></div>
     <Skeleton className="h-80 w-full" />
   </div>
 }

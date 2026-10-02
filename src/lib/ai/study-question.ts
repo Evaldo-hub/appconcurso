@@ -5,6 +5,7 @@ export type StudyAction =
   | 'explicacao'
   | 'resumo'
   | 'aula'
+  | 'mapa_mental'
   | 'pergunta'
 
 export interface StudyQuestionData {
@@ -322,6 +323,54 @@ comandos apenas para dimensionamento visual.
 
 Aprofunde o assunto sem perder objetividade e sem inventar informações
 apenas para aumentar o tamanho da resposta.
+`.trim()
+      break
+
+    case 'mapa_mental':
+      task = `
+TAREFA:
+Crie um MAPA MENTAL textual sobre o tema central desta questão utilizando
+exclusivamente o conteúdo sustentado pelo CONTEXTO DE APOIO fornecido.
+
+Use a disciplina, o assunto, o subassunto e a questão para identificar o tema.
+O tema central deve nomear o conteúdo estudado e nunca ser "Questão" seguido
+de um número nem uma simples reformulação do enunciado.
+
+Organize o conteúdo hierarquicamente. Comece pelo TEMA CENTRAL e apresente
+quantos ramos forem justificados pelas fontes. Dentro de cada ramo, apresente
+subtópicos e palavras-chave relevantes.
+
+Priorize, somente quando sustentados pelas fontes:
+- conceitos e classificações;
+- objetivos e características;
+- etapas e relações importantes;
+- exceções e diferenças conceituais;
+- pontos com potencial de cobrança em prova.
+
+Não invente informações ausentes das fontes. Não acrescente legislação,
+conceitos ou dados externos apenas por conhecimento geral. Quando uma informação
+não estiver disponível nas fontes, não a inclua como fato.
+
+Use texto simples e preserve exatamente os caracteres e a indentação desta forma:
+
+TEMA CENTRAL
+│
+├── RAMO 1
+│   ├── Subtópico
+│   │   └── Palavra-chave / conceito
+│   └── Subtópico
+│
+└── RAMO FINAL
+    ├── Subtópico
+    └── Subtópico
+
+Não use bloco de código, tabela, HTML ou JSON.
+
+Finalize exatamente com o título:
+O QUE MEMORIZAR PARA A PROVA
+
+Depois apresente de 3 a 7 pontos objetivos, numerados e extraídos do conteúdo
+disponível nas fontes.
 `.trim()
       break
 

@@ -1,4 +1,4 @@
-export type AiStudyAction = 'explicacao' | 'resumo' | 'aula' | 'pergunta'
+export type AiStudyAction = 'explicacao' | 'resumo' | 'aula' | 'mapa_mental' | 'pergunta'
 
 export interface AiStudySource {
   titulo: string

@@ -11,6 +11,7 @@ const allowedActions = [
   'explicacao',
   'resumo',
   'aula',
+  'mapa_mental',
   'pergunta',
 ] as const
 
@@ -435,6 +436,7 @@ export async function POST(
     console.info('study_ai', {
       event: 'generation_started',
       provider: 'gemini',
+      mode: action,
     })
 
     const generated =
@@ -526,7 +528,7 @@ export async function POST(
           500,
         )
       }
-    } else {
+    } else if (action !== 'mapa_mental') {
       const {
         error: saveError,
       } = await admin
