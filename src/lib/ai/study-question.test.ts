@@ -42,12 +42,42 @@ test('mapa mental usa prompt exclusivo, fontes e hierarquia textual', () => {
   const prompt = buildStudyPrompt({ action: 'mapa_mental', questao, contexto: 'Fonte: Manual\nConteúdo confirmado.' })
   assert.match(prompt, /MAPA MENTAL textual/)
   assert.match(prompt, /exclusivamente o conteúdo sustentado pelo CONTEXTO DE APOIO/)
-  assert.match(prompt, /├── RAMO 1/)
-  assert.match(prompt, /└── RAMO FINAL/)
-  assert.match(prompt, /O QUE MEMORIZAR PARA A PROVA/)
-  assert.match(prompt, /de 3 a 7 pontos objetivos/)
+  assert.match(prompt, /Retorne somente JSON válido/)
+  assert.match(prompt, /"ramos"/)
+  assert.match(prompt, /"memorizar"/)
+  assert.match(prompt, /de 2 a 8 ramos/)
+  assert.match(prompt, /target, book, brain, workflow/)
   assert.doesNotMatch(prompt, /Produza um RESUMO DE REVISÃO RÁPIDA/)
   assert.doesNotMatch(prompt, /Produza uma AULA COMPLETA/)
+})
+
+test('geração do mapa solicita JSON ao Gemini e valida a estrutura', async () => {
+  const originalFetch = globalThis.fetch
+  const originalKey = process.env.GEMINI_API_KEY
+  let requestBody: Record<string, unknown> | undefined
+  process.env.GEMINI_API_KEY = 'chave-mapa-teste'
+  const map = {
+    titulo: 'Tema central', descricao: 'Descrição baseada nas fontes.',
+    ramos: [
+      { titulo: 'Ramo A', icone: 'target', itens: [{ titulo: 'Item A', descricao: 'Descrição A.' }] },
+      { titulo: 'Ramo B', icone: 'workflow', itens: [{ titulo: 'Item B', descricao: 'Descrição B.' }] },
+    ],
+    memorizar: ['Ponto 1', 'Ponto 2', 'Ponto 3'],
+  }
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(map) }] } }] })
+  }
+  try {
+    const result = await generateStudyContent({ action: 'mapa_mental', questao, contexto: 'Fonte confirmada.' })
+    const config = requestBody?.generationConfig as Record<string, unknown>
+    assert.equal(config.responseMimeType, 'application/json')
+    assert.deepEqual(JSON.parse(result.conteudo), map)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalKey === undefined) delete process.env.GEMINI_API_KEY
+    else process.env.GEMINI_API_KEY = originalKey
+  }
 })
 
 test('normalização preserva caracteres, quebras e indentação do mapa mental', () => {

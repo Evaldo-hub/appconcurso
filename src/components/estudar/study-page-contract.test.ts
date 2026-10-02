@@ -20,5 +20,7 @@ test('mapa mental usa o mesmo generate dos modos automáticos', async () => {
   const source = await readFile(pageUrl, 'utf8')
   assert.match(source, /else void generate\(mode\)/)
   assert.match(source, /onGenerate=\{\(\) => void generate\(mode\)\}/)
+  assert.match(source, /MindMapContent content=\{content\}/)
   assert.match(source, /StudyMarkdown content=\{content\} mode=\{mode\}/)
+  assert.match(source, /MindMapSkeleton/)
 })

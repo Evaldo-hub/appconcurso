@@ -1,5 +1,7 @@
 import { generateWithGemini } from './gemini'
 import { generateWithGroq } from './groq'
+import { parseAiJson } from './ai-json'
+import { mindMapSchema } from './mind-map-schema'
 
 export type StudyAction =
   | 'explicacao'
@@ -118,7 +120,7 @@ Quando houver explicação previamente cadastrada,
 ela pode ser usada como apoio, mas você deve
 produzir uma resposta didática própria.
 
-Não use JSON.
+Não use JSON, exceto quando a tarefa solicitar explicitamente uma estrutura JSON.
 
 Você pode usar Markdown simples para organizar
 a explicação.
@@ -351,26 +353,27 @@ Não invente informações ausentes das fontes. Não acrescente legislação,
 conceitos ou dados externos apenas por conhecimento geral. Quando uma informação
 não estiver disponível nas fontes, não a inclua como fato.
 
-Use texto simples e preserve exatamente os caracteres e a indentação desta forma:
+Retorne somente JSON válido, sem bloco Markdown, HTML ou texto externo, neste formato:
+{
+  "titulo": "Tema central curto",
+  "descricao": "Síntese visual baseada nas fontes",
+  "ramos": [
+    {
+      "titulo": "Ramo principal",
+      "icone": "brain",
+      "itens": [
+        { "titulo": "Conceito curto", "descricao": "Explicação didática curta" }
+      ]
+    }
+  ],
+  "memorizar": ["Ponto objetivo 1", "Ponto objetivo 2", "Ponto objetivo 3"]
+}
 
-TEMA CENTRAL
-│
-├── RAMO 1
-│   ├── Subtópico
-│   │   └── Palavra-chave / conceito
-│   └── Subtópico
-│
-└── RAMO FINAL
-    ├── Subtópico
-    └── Subtópico
+Gere de 2 a 8 ramos conforme as fontes, com 1 a 8 itens por ramo e de 3 a 7
+pontos em memorizar. Não invente conteúdo para preencher o layout.
 
-Não use bloco de código, tabela, HTML ou JSON.
-
-Finalize exatamente com o título:
-O QUE MEMORIZAR PARA A PROVA
-
-Depois apresente de 3 a 7 pontos objetivos, numerados e extraídos do conteúdo
-disponível nas fontes.
+O campo icone deve ser somente um destes valores:
+target, book, brain, workflow, layers, building, scale, list, check, alert, lightbulb.
 `.trim()
       break
 
@@ -415,6 +418,7 @@ deixe essa limitação clara.
 
 async function generateWithFallback(
   prompt: string,
+  responseFormat: 'json' | 'text' = 'text',
 ): Promise<{
   conteudo: string
   provider: StudyAiProvider
@@ -425,7 +429,7 @@ async function generateWithFallback(
         prompt,
         temperature: 0.3,
         maxOutputTokens: 8192,
-        responseFormat: 'text',
+        responseFormat,
       })
 
     return {
@@ -446,7 +450,7 @@ async function generateWithFallback(
           prompt,
           temperature: 0.3,
           maxOutputTokens: 8192,
-          responseFormat: 'text',
+          responseFormat,
         })
 
       return {
@@ -488,7 +492,19 @@ export async function generateStudyContent(
   const prompt = buildStudyPrompt(input)
 
   const generated =
-    await generateWithFallback(prompt)
+    await generateWithFallback(prompt, input.action === 'mapa_mental' ? 'json' : 'text')
+
+  if (input.action === 'mapa_mental') {
+    const parsed = parseAiJson(generated.conteudo, 'mind_map_generation', generated.provider)
+    const validated = mindMapSchema.safeParse(parsed)
+    if (!validated.success) {
+      throw new Error(`${generated.provider} retornou um mapa mental fora do formato esperado.`)
+    }
+    return {
+      conteudo: JSON.stringify(validated.data),
+      provider: generated.provider,
+    }
+  }
 
   const conteudo = normalizeStudyContent(generated.conteudo)
 

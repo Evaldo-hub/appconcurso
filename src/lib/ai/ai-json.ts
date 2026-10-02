@@ -5,6 +5,7 @@ export type AiJsonStage =
   | 'semantic_validation'
   | 'question_correction'
   | 'semantic_revalidation'
+  | 'mind_map_generation'
 
 const DIAGNOSTIC_EXCERPT_LENGTH = 180
 

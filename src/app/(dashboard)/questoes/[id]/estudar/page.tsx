@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StudyMarkdown } from '@/components/estudar/study-markdown'
+import { MindMapContent, MindMapSkeleton } from '@/components/questoes/mind-map-visual'
 import { cn } from '@/lib/utils'
 
 const modes: Array<{ value: StudyMode; label: string; description: string; icon: typeof BookOpen }> = [
@@ -123,7 +124,9 @@ export default function EstudarQuestaoPage() {
         {mode === 'perguntar'
           ? <AskAssistant question={question} setQuestion={setQuestion} messages={messages} generating={generating} submitQuestion={submitQuestion} />
           : content
-            ? <StudyMarkdown content={content} mode={mode} />
+            ? mode === 'mapa_mental'
+              ? <MindMapContent content={content} />
+              : <StudyMarkdown content={content} mode={mode} />
             : <EmptyContent mode={mode} generating={generating} onGenerate={() => void generate(mode)} />}
       </CardContent>
     </Card>
@@ -160,6 +163,7 @@ function GenerationError({ onRetry, retryDisabled }: { onRetry: () => void; retr
 }
 
 function EmptyContent({ mode, generating, onGenerate }: { mode: Exclude<StudyMode, 'perguntar'>; generating: boolean; onGenerate: () => void }) {
+  if (mode === 'mapa_mental' && generating) return <MindMapSkeleton />
   const label = modes.find((item) => item.value === mode)?.label.toLowerCase() ?? 'conteúdo'
   return <div className="flex min-h-64 flex-col items-center justify-center space-y-4 text-center">
     <div className="rounded-full bg-muted p-4">{generating ? <Loader2 className="h-7 w-7 animate-spin text-primary" aria-hidden="true" /> : <Sparkles className="h-7 w-7 text-muted-foreground" aria-hidden="true" />}</div>
