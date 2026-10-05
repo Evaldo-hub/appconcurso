@@ -29,6 +29,7 @@ export interface RagUploadFile {
 }
 export interface RagUploadContestContext { organization: string; year: number | null }
 export interface RagMaterialUploadDependencies {
+  uploadId: string
   registration: RagMaterialRegistrationRepository
   github: GitHubMaterialWriter
   loadContestContext(concursoId: number): Promise<RagUploadContestContext | null>
@@ -43,6 +44,34 @@ export class RagMaterialUploadError extends Error {
     super(code)
     this.name = 'RagMaterialUploadError'
   }
+}
+
+export function sanitizeRagUploadDiagnostic(value: string) {
+  return value
+    .replace(/authorization\s*:\s*bearer\s+\S+/gi, 'Authorization: Bearer [REDACTED]')
+    .replace(/(?:AIza|ghp_|github_pat_|sb_secret_)[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .slice(0, 500)
+}
+
+function uploadLog(marker: string, uploadId: string, stage: string, details: Record<string, unknown> = {}) {
+  console.info(`[RAG_UPLOAD][${marker}]`, { uploadId, stage, ...details })
+}
+
+function uploadErrorLog(uploadId: string, stage: string, error: unknown, destinationPath?: string) {
+  const githubError = error instanceof RagGitHubRequestError ? error : null
+  console.error('[RAG_UPLOAD][ERROR]', {
+    uploadId,
+    stage,
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+    errorMessage: error instanceof Error ? sanitizeRagUploadDiagnostic(error.message) : 'Falha desconhecida.',
+    status: githubError?.status || null,
+    statusText: githubError?.statusText ?? null,
+    requestId: githubError?.requestId ?? null,
+    causeCode: githubError?.causeCode ?? null,
+    diagnosticKind: githubError?.diagnosticKind ?? null,
+    destinationPath,
+  })
 }
 
 export function validateRagUploadFileName(name: string): { fileName: string; fileType: 'pdf' | 'txt' | 'md' } {
@@ -86,6 +115,7 @@ export async function uploadAndRegisterRagMaterial(
   file: RagUploadFile,
 ): Promise<RagMaterialUploadResult> {
   const validatedFile = await readAndValidateFile(file)
+  uploadLog('03', dependencies.uploadId, 'file-valid', { filename: validatedFile.fileName, fileSize: validatedFile.bytes.byteLength })
   const context = await dependencies.loadContestContext(concursoId)
   if (!context) throw new RagMaterialUploadError('INVALID_FILE')
   const githubPath = buildRagUploadPath(context, metadata.categoria, validatedFile.fileName)
@@ -102,19 +132,44 @@ export async function uploadAndRegisterRagMaterial(
   }
   await validateRagMaterialRegistration(dependencies.registration, concursoId, registrationInput)
 
-  let exists: boolean
-  try { exists = await dependencies.github.fileExists(githubPath) } catch { throw new RagMaterialUploadError('GITHUB_FAILURE') }
-  if (exists) throw new RagMaterialUploadError('GITHUB_CONFLICT', githubPath)
+  uploadLog('05', dependencies.uploadId, 'github-preflight-start', { destinationPath: githubPath })
+  let preflight
   try {
-    await dependencies.github.createFile(githubPath, validatedFile.bytes, `Add RAG material: ${validatedFile.fileName}`)
+    preflight = await dependencies.github.fileExists(githubPath)
   } catch (error) {
+    uploadErrorLog(dependencies.uploadId, 'github-preflight', error, githubPath)
+    throw new RagMaterialUploadError('GITHUB_FAILURE', githubPath)
+  }
+  uploadLog('06', dependencies.uploadId, 'github-preflight-result', { destinationPath: githubPath, status: preflight.status, requestId: preflight.requestId, targetExists: preflight.exists })
+  if (preflight.exists) {
+    console.error('[RAG_UPLOAD][ERROR]', {
+      uploadId: dependencies.uploadId,
+      stage: 'github-preflight',
+      errorName: 'RagMaterialUploadError',
+      errorMessage: 'GITHUB_CONFLICT',
+      status: preflight.status,
+      requestId: preflight.requestId,
+      diagnosticKind: 'GITHUB_TARGET_EXISTS',
+      destinationPath: githubPath,
+    })
+    throw new RagMaterialUploadError('GITHUB_CONFLICT', githubPath)
+  }
+  uploadLog('07', dependencies.uploadId, 'github-put-start', { destinationPath: githubPath })
+  try {
+    const uploaded = await dependencies.github.createFile(githubPath, validatedFile.bytes, `Add RAG material: ${validatedFile.fileName}`)
+    uploadLog('08', dependencies.uploadId, 'github-put-result', { destinationPath: githubPath, status: uploaded.status, requestId: uploaded.requestId })
+  } catch (error) {
+    uploadErrorLog(dependencies.uploadId, 'github-put', error, githubPath)
     if (error instanceof RagGitHubRequestError) throw new RagMaterialUploadError(error.code, githubPath)
     throw new RagMaterialUploadError('GITHUB_FAILURE')
   }
+  uploadLog('09', dependencies.uploadId, 'supabase-register-start', { destinationPath: githubPath })
   try {
     const row = await registerRagMaterial(dependencies.registration, concursoId, registrationInput)
+    uploadLog('10', dependencies.uploadId, 'supabase-register-result', { destinationPath: githubPath, materialId: row.id })
     return { materialId: row.id, githubPath }
-  } catch {
+  } catch (error) {
+    uploadErrorLog(dependencies.uploadId, 'supabase-register', error, githubPath)
     throw new RagMaterialUploadError('FILE_UPLOADED_METADATA_FAILED', githubPath)
   }
 }

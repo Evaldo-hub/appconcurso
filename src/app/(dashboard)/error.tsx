@@ -2,9 +2,18 @@
 
 import { Button } from '@/components/ui/button'
 import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 
-export default function DashboardError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
+export default function DashboardError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const router = useRouter()
+  useEffect(() => {
+    const safeMessage = error.message
+      .replace(/authorization\s*:\s*bearer\s+\S+/gi, 'Authorization: Bearer [REDACTED]')
+      .replace(/(?:AIza|ghp_|github_pat_|sb_secret_)[A-Za-z0-9_-]+/g, '[REDACTED]')
+      .replace(/[\r\n\t]+/g, ' ')
+      .slice(0, 500)
+    console.error('[DASHBOARD_ERROR]', { errorName: error.name, errorMessage: safeMessage, digest: error.digest ?? null })
+  }, [error])
 
   return (
     <section className="mx-auto max-w-xl rounded-lg border bg-card p-8 text-center" role="alert">

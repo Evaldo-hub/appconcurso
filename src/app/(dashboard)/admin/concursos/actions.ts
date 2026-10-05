@@ -1,5 +1,6 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
@@ -10,7 +11,7 @@ import { createRagMaterialRegistrationRepository } from '@/lib/rag/admin-materia
 import { ragMaterialBrowserInputSchema, RagMaterialRegistrationError, registerExistingRagMaterial } from '@/lib/rag/admin-material'
 import { createGitHubMaterialFileChecker, createGitHubMaterialWriter } from '@/lib/rag/github-loader'
 import { getRagGitHubConfig } from '@/lib/rag/config'
-import { ragMaterialUploadMetadataSchema, RagMaterialUploadError, uploadAndRegisterRagMaterial } from '@/lib/rag/admin-material-upload'
+import { ragMaterialUploadMetadataSchema, RagMaterialUploadError, sanitizeRagUploadDiagnostic, uploadAndRegisterRagMaterial } from '@/lib/rag/admin-material-upload'
 import { executeStartRagIngestion, failedStartRagIngestion, successfulStartRagIngestion, type StartRagIngestionResult } from '@/lib/rag/admin-start-ingestion'
 import { RAG_CONFIG, RagGitHubConfigError, getRagServerConfig } from '@/lib/rag/config'
 import { createGoogleEmbeddingClient } from '@/lib/rag/embeddings'
@@ -103,6 +104,8 @@ export async function saveRagMaterialAction(routeConcursoId: number, formData: F
 }
 
 export async function uploadRagMaterialAction(routeConcursoId: number, formData: FormData) {
+  const uploadId = randomUUID()
+  console.info('[RAG_UPLOAD][01]', { uploadId, stage: 'action-start', concursoId: routeConcursoId })
   await requireAdmin()
   const metadata = ragMaterialUploadMetadataSchema.safeParse({
     titulo: formData.get('titulo'), prova_id: formData.get('prova_id'), disciplina: formData.get('disciplina'),
@@ -111,15 +114,26 @@ export async function uploadRagMaterialAction(routeConcursoId: number, formData:
   })
   const file = formData.get('arquivo')
   if (!metadata.success || !(file instanceof File) || !Number.isSafeInteger(routeConcursoId) || routeConcursoId < 1) {
+    console.error('[RAG_UPLOAD][ERROR]', { uploadId, stage: 'form-validation', errorName: 'ValidationError', errorMessage: 'RAG_UPLOAD_INVALID_FORM' })
+    console.info('[RAG_UPLOAD][14]', { uploadId, stage: 'redirect-start', outcome: 'upload_invalid' })
     redirect(`/admin/concursos/${routeConcursoId}?material_status=upload_invalid`)
   }
+  console.info('[RAG_UPLOAD][02]', {
+    uploadId, stage: 'form-valid', concursoId: routeConcursoId, provaId: metadata.data.prova_id,
+    filename: file.name, fileSize: file.size, categoriaDocumental: metadata.data.categoria_documental,
+  })
 
   const admin = createAdminClient()
-  let materialId: number
+  let materialId: number | null = null
+  let failureUrl: string | null = null
   try {
+    const githubConfig = getRagGitHubConfig()
+    console.info('[RAG_UPLOAD][04]', { uploadId, stage: 'github-config-valid' })
+    console.info('[RAG_UPLOAD][05]', { uploadId, stage: 'service-start' })
     const result = await uploadAndRegisterRagMaterial({
+      uploadId,
       registration: createRagMaterialRegistrationRepository(admin),
-      github: createGitHubMaterialWriter(getRagGitHubConfig()),
+      github: createGitHubMaterialWriter(githubConfig),
       async loadContestContext(concursoId) {
         const { data, error } = await admin.from('concursos').select('orgao,ano').eq('id', concursoId)
           .maybeSingle<{ orgao: string; ano: number | null }>()
@@ -128,20 +142,35 @@ export async function uploadRagMaterialAction(routeConcursoId: number, formData:
       },
     }, routeConcursoId, metadata.data, file)
     materialId = result.materialId
+    console.info('[RAG_UPLOAD][11]', { uploadId, stage: 'action-success', materialId, destinationPath: result.githubPath })
   } catch (error) {
+    console.error('[RAG_UPLOAD][ERROR]', {
+      uploadId,
+      stage: 'action',
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+      errorMessage: error instanceof Error ? sanitizeRagUploadDiagnostic(error.message) : 'Falha desconhecida.',
+    })
     if (error instanceof RagMaterialRegistrationError) {
       const status = error.code === 'INVALID_EXAM' ? 'exam' : error.code === 'DUPLICATE' ? 'duplicate' : 'upload_error'
-      redirect(`/admin/concursos/${routeConcursoId}?material_status=${status}`)
+      failureUrl = `/admin/concursos/${routeConcursoId}?material_status=${status}`
     }
-    if (error instanceof RagMaterialUploadError) {
+    else if (error instanceof RagMaterialUploadError) {
       const status = ({ INVALID_FILE: 'upload_invalid', FILE_TOO_LARGE: 'upload_large', GITHUB_CONFLICT: 'github_conflict', GITHUB_FAILURE: 'github_error', RAG_GITHUB_AUTH_FAILED: 'github_auth_failed', RAG_GITHUB_PERMISSION_DENIED: 'github_permission_denied', RAG_GITHUB_REPOSITORY_OR_REF_NOT_FOUND: 'github_repository_or_ref_not_found', RAG_GITHUB_CONFLICT: 'github_conflict', RAG_GITHUB_VALIDATION_FAILED: 'github_validation_failed', RAG_GITHUB_UPLOAD_FAILED: 'github_error', FILE_UPLOADED_METADATA_FAILED: 'metadata_failed' } as const)[error.code]
       const path = error.githubPath ? `&github_path=${encodeURIComponent(error.githubPath)}` : ''
-      redirect(`/admin/concursos/${routeConcursoId}?material_status=${status}${path}`)
+      failureUrl = `/admin/concursos/${routeConcursoId}?material_status=${status}${path}`
     }
-    if (error instanceof RagGitHubConfigError) redirect(`/admin/concursos/${routeConcursoId}?material_status=github_config_missing`)
-    redirect(`/admin/concursos/${routeConcursoId}?material_status=upload_error`)
+    else if (error instanceof RagGitHubConfigError) failureUrl = `/admin/concursos/${routeConcursoId}?material_status=github_config_missing`
+    else throw error
   }
+  if (failureUrl) {
+    console.info('[RAG_UPLOAD][14]', { uploadId, stage: 'redirect-start', outcome: 'expected-error' })
+    redirect(failureUrl)
+  }
+  if (materialId === null) throw new Error('RAG_UPLOAD_MISSING_RESULT')
+  console.info('[RAG_UPLOAD][12]', { uploadId, stage: 'revalidate-start' })
   revalidatePath(`/admin/concursos/${routeConcursoId}`)
+  console.info('[RAG_UPLOAD][13]', { uploadId, stage: 'revalidate-success' })
+  console.info('[RAG_UPLOAD][14]', { uploadId, stage: 'redirect-start', outcome: 'success' })
   redirect(`/admin/concursos/${routeConcursoId}?material_status=uploaded&material_id=${materialId}`)
 }
 

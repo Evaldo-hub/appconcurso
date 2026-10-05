@@ -19,12 +19,25 @@ export type RagGitHubRequestErrorCode =
   | 'RAG_GITHUB_VALIDATION_FAILED'
   | 'RAG_GITHUB_UPLOAD_FAILED'
 
+export type RagGitHubDiagnosticKind =
+  | 'GITHUB_PREFLIGHT_FAILED'
+  | 'GITHUB_UPLOAD_FAILED'
+  | 'GITHUB_UPLOAD_REJECTED'
+  | 'GITHUB_TARGET_EXISTS'
+
+export type RagGitHubRequestStage = 'preflight' | 'upload'
+
 export class RagGitHubRequestError extends Error {
   constructor(
     readonly code: RagGitHubRequestErrorCode,
     readonly status: number,
     readonly githubMessage: string | null,
     readonly documentationUrl: string | null,
+    readonly stage: RagGitHubRequestStage = 'upload',
+    readonly diagnosticKind: RagGitHubDiagnosticKind = 'GITHUB_UPLOAD_REJECTED',
+    readonly statusText: string | null = null,
+    readonly requestId: string | null = null,
+    readonly causeCode: string | null = null,
   ) {
     super(code)
     this.name = 'RagGitHubRequestError'
@@ -87,7 +100,20 @@ function sanitizeGitHubDiagnostic(value: string | null, token?: string) {
   return sanitized
 }
 
-async function failedGitHubUpload(response: Response, repository: GitHubRepositoryConfig, path: string) {
+function safeCauseCode(error: unknown) {
+  if (!error || typeof error !== 'object' || !('cause' in error)) return null
+  const cause = error.cause
+  if (!cause || typeof cause !== 'object' || !('code' in cause) || typeof cause.code !== 'string') return null
+  return /^[A-Z0-9_-]{1,80}$/i.test(cause.code) ? cause.code : null
+}
+
+function failedGitHubNetworkRequest(error: unknown, repository: GitHubRepositoryConfig, stage: RagGitHubRequestStage) {
+  const message = sanitizeGitHubDiagnostic(error instanceof Error ? error.message : 'Falha de rede no GitHub.', repository.token)
+  const diagnosticKind = stage === 'preflight' ? 'GITHUB_PREFLIGHT_FAILED' : 'GITHUB_UPLOAD_FAILED'
+  return new RagGitHubRequestError('RAG_GITHUB_UPLOAD_FAILED', 0, message, null, stage, diagnosticKind, null, null, safeCauseCode(error))
+}
+
+async function failedGitHubRequest(response: Response, repository: GitHubRepositoryConfig, stage: RagGitHubRequestStage) {
   let githubMessage: string | null = null
   let documentationUrl: string | null = null
   try {
@@ -103,23 +129,18 @@ async function failedGitHubUpload(response: Response, repository: GitHubReposito
   githubMessage = sanitizeGitHubDiagnostic(githubMessage, repository.token)
   documentationUrl = sanitizeGitHubDiagnostic(documentationUrl, repository.token)
   const code = uploadErrorCode(response.status)
-  console.error('[RAG_GITHUB_UPLOAD_FAILED]', {
-    code,
-    status: response.status,
-    statusText: response.statusText,
-    githubMessage,
-    documentationUrl,
-    owner: repository.owner,
-    repository: repository.repository,
-    ref: repository.ref,
-    path,
-  })
-  return new RagGitHubRequestError(code, response.status, githubMessage, documentationUrl)
+  const requestId = response.headers.get('x-github-request-id')
+  const diagnosticKind = stage === 'preflight' ? 'GITHUB_PREFLIGHT_FAILED'
+    : response.status >= 400 && response.status < 500 ? 'GITHUB_UPLOAD_REJECTED' : 'GITHUB_UPLOAD_FAILED'
+  return new RagGitHubRequestError(code, response.status, githubMessage, documentationUrl, stage, diagnosticKind, response.statusText, requestId)
 }
 
+export interface GitHubRequestResult { status: number; requestId: string | null }
+export interface GitHubPreflightResult extends GitHubRequestResult { exists: boolean }
+
 export interface GitHubMaterialWriter {
-  fileExists(path: string): Promise<boolean>
-  createFile(path: string, bytes: Uint8Array, commitMessage: string): Promise<void>
+  fileExists(path: string): Promise<GitHubPreflightResult>
+  createFile(path: string, bytes: Uint8Array, commitMessage: string): Promise<GitHubRequestResult>
 }
 
 export interface GitHubMaterialFileCheck {
@@ -165,22 +186,34 @@ export function createGitHubMaterialWriter(
   if (!ref || /[\r\n]/.test(ref)) throw new Error('A referência GitHub é inválida.')
   return {
     async fileExists(path) {
-      const response = await fetchImpl(`${repositoryContentsUrl(repository, path)}?ref=${encodeURIComponent(ref)}`, {
-        method: 'GET', headers: githubHeaders(repository), cache: 'no-store',
-      })
-      if (response.status === 404) return false
-      if (!response.ok) throw new Error(`Não foi possível verificar o arquivo no GitHub (${response.status}).`)
-      return true
+      let response: Response
+      try {
+        response = await fetchImpl(`${repositoryContentsUrl(repository, path)}?ref=${encodeURIComponent(ref)}`, {
+          method: 'GET', headers: githubHeaders(repository), cache: 'no-store',
+        })
+      } catch (error) {
+        throw failedGitHubNetworkRequest(error, repository, 'preflight')
+      }
+      const result = { status: response.status, requestId: response.headers.get('x-github-request-id') }
+      if (response.status === 404) return { exists: false, ...result }
+      if (!response.ok) throw await failedGitHubRequest(response, repository, 'preflight')
+      return { exists: true, ...result }
     },
     async createFile(path, bytes, commitMessage) {
       if (!repository.token) throw new Error('Credencial de escrita GitHub não configurada no servidor.')
-      const response = await fetchImpl(repositoryContentsUrl(repository, path), {
-        method: 'PUT',
-        headers: { ...githubHeaders(repository), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: commitMessage, content: Buffer.from(bytes).toString('base64'), branch: ref }),
-        cache: 'no-store',
-      })
-      if (response.status !== 201) throw await failedGitHubUpload(response, repository, path)
+      let response: Response
+      try {
+        response = await fetchImpl(repositoryContentsUrl(repository, path), {
+          method: 'PUT',
+          headers: { ...githubHeaders(repository), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: commitMessage, content: Buffer.from(bytes).toString('base64'), branch: ref }),
+          cache: 'no-store',
+        })
+      } catch (error) {
+        throw failedGitHubNetworkRequest(error, repository, 'upload')
+      }
+      if (response.status !== 201) throw await failedGitHubRequest(response, repository, 'upload')
+      return { status: response.status, requestId: response.headers.get('x-github-request-id') }
     },
   }
 }

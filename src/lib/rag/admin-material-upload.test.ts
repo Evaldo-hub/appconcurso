@@ -44,13 +44,15 @@ function fixture(options: { duplicate?: boolean; githubExists?: boolean; githubF
     },
   }
   const dependencies: RagMaterialUploadDependencies = {
+    uploadId: 'upload-test-id',
     registration,
     loadContestContext: async () => ({ organization: 'TRT8', year: 2022 }),
     github: {
-      fileExists: async () => options.githubExists ?? false,
+      fileExists: async () => ({ exists: options.githubExists ?? false, status: options.githubExists ? 200 : 404, requestId: 'request-preflight' }),
       createFile: async (path, bytes, message) => {
         if (options.githubFails) throw new Error('github unavailable')
         githubWrites.push({ path, bytes, message })
+        return { status: 201, requestId: 'request-put' }
       },
     },
   }
@@ -177,7 +179,7 @@ test('writer GitHub usa Contents API, branch oficial e token somente no header',
     return new Response(init?.method === 'PUT' ? '{}' : '', { status: init?.method === 'PUT' ? 201 : 404 })
   }
   const writer = createGitHubMaterialWriter({ owner: 'owner', repository: 'repo', ref: 'main', token: 'secret-token' }, fetchMock as typeof fetch)
-  assert.equal(await writer.fileExists('concursos/trt8/2022/documentos_gerais/Revisão.pdf'), false)
+  assert.deepEqual(await writer.fileExists('concursos/trt8/2022/documentos_gerais/Revisão.pdf'), { exists: false, status: 404, requestId: null })
   await writer.createFile('concursos/trt8/2022/documentos_gerais/Revisão.pdf', new TextEncoder().encode('%PDF-'), 'Add RAG material: Revisão.pdf')
   assert.equal(requests.length, 2)
   assert.equal(requests.every((request) => !request.url.includes('secret-token')), true)
@@ -246,6 +248,34 @@ test('HTTP 401, 403, 404, 409 e 422 geram códigos e logs seguros com o body lid
   assert.equal(serializedLogs.includes(fakeToken), false)
   assert.equal(serializedLogs.includes('Authorization'), false)
   assert.match(serializedLogs, /concursos\/trt8\/2022\/edital\/novo\.pdf/)
+})
+
+test('falha de rede antes de Response preserva estágio, mensagem sanitizada e cause code', async () => {
+  const token = 'github_pat_FAKE_TEST_ONLY'
+  const cause = Object.assign(new Error('socket reset'), { code: 'ECONNRESET' })
+  const networkError = new TypeError(`fetch failed ${token}`, { cause })
+  const writer = createGitHubMaterialWriter(
+    { owner: 'owner', repository: 'repo', ref: 'main', token },
+    (async () => { throw networkError }) as typeof fetch,
+  )
+  await assert.rejects(
+    writer.fileExists('concursos/trt8/2026/documentos_gerais/CONSTITUICAO 1988.pdf'),
+    (error) => error instanceof RagGitHubRequestError
+      && error.stage === 'preflight'
+      && error.diagnosticKind === 'GITHUB_PREFLIGHT_FAILED'
+      && error.status === 0
+      && error.githubMessage === 'fetch failed [REDACTED]'
+      && error.causeCode === 'ECONNRESET',
+  )
+})
+
+test('arquivo válido de aproximadamente 2,8 MiB passa pelo limite e preserva persistência', async () => {
+  const bytes = new Uint8Array(2_938_989)
+  bytes.set(new TextEncoder().encode('%PDF-'))
+  const state = fixture()
+  await uploadAndRegisterRagMaterial(state.dependencies, 7, metadata, file('CONSTITUICAO 1988.pdf', bytes, 'application/pdf'))
+  assert.equal(state.githubWrites.length, 1)
+  assert.equal(state.inserted.length, 1)
 })
 
 test('checker GitHub aceita somente HTTP 200 com metadata type=file', async () => {
