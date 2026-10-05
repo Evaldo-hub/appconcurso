@@ -72,6 +72,34 @@ test('PDF válido realiza uma escrita GitHub e um insert de material, sem opera�
   assert.deepEqual(Object.keys(state.dependencies).sort(), ['github', 'loadContestContext', 'registration'])
 })
 
+test('aceita PDF no limite funcional de 25 MiB', async () => {
+  assert.equal(MAX_RAG_UPLOAD_BYTES, 25 * 1024 * 1024)
+  const bytes = new Uint8Array(MAX_RAG_UPLOAD_BYTES)
+  bytes.set(new TextEncoder().encode('%PDF-'))
+  const state = fixture()
+  await uploadAndRegisterRagMaterial(state.dependencies, 7, metadata, file('limite.pdf', bytes, 'application/pdf'))
+  assert.equal(state.githubWrites.length, 1)
+  assert.equal(state.inserted.length, 1)
+})
+
+test('rejeita PDF acima de 25 MiB antes de ler ou chamar o GitHub', async () => {
+  let arrayBufferCalled = false
+  const state = fixture()
+  const oversized: RagUploadFile = {
+    name: 'acima-do-limite.pdf',
+    type: 'application/pdf',
+    size: MAX_RAG_UPLOAD_BYTES + 1,
+    async arrayBuffer() {
+      arrayBufferCalled = true
+      return new ArrayBuffer(0)
+    },
+  }
+  await expectUploadError(uploadAndRegisterRagMaterial(state.dependencies, 7, metadata, oversized), 'FILE_TOO_LARGE')
+  assert.equal(arrayBufferCalled, false)
+  assert.equal(state.githubWrites.length, 0)
+  assert.equal(state.inserted.length, 0)
+})
+
 test('PDF falso, extensão inválida e arquivo grande falham antes de qualquer escrita', async () => {
   for (const invalid of [
     file('arquivo.pdf', 'não é PDF', 'application/pdf'),

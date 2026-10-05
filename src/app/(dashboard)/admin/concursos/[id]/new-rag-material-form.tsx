@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useFormStatus } from 'react-dom'
 import { Plus, Save, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { exceedsRagUploadLimit } from '@/lib/rag/upload-limits'
 
 type ExamOption = { id: number; name: string }
 
@@ -23,6 +24,17 @@ export function NewRagMaterialForm({
 }) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'reference' | 'upload'>('reference')
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const validateSelectedFile = (file: File | null) => {
+    const error = file && exceedsRagUploadLimit(file.size) ? 'O arquivo excede o limite de 25 MiB.' : null
+    setUploadError(error)
+    return error === null
+  }
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    if (mode !== 'upload') return
+    const file = new FormData(event.currentTarget).get('arquivo')
+    if (!(file instanceof File) || !validateSelectedFile(file)) event.preventDefault()
+  }
   if (!open) return <Button type="button" onClick={() => setOpen(true)}><Plus />Novo material</Button>
 
   return <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="new-rag-material-title">
@@ -32,19 +44,20 @@ export function NewRagMaterialForm({
         <Button type="button" variant="ghost" size="icon" aria-label="Cancelar cadastro" onClick={() => setOpen(false)}><X /></Button>
       </CardHeader>
       <CardContent>
-        <form action={mode === 'reference' ? action : uploadAction} className="space-y-4">
+        <form action={mode === 'reference' ? action : uploadAction} onSubmit={handleSubmit} className="space-y-4">
           <fieldset className="space-y-2"><legend className="text-sm font-medium">Origem</legend><div className="flex flex-wrap gap-4 text-sm"><label className="flex items-center gap-2"><input type="radio" name="source_mode" checked={mode === 'reference'} onChange={() => setMode('reference')} />Arquivo já existente</label><label className="flex items-center gap-2"><input type="radio" name="source_mode" checked={mode === 'upload'} onChange={() => setMode('upload')} />Enviar novo arquivo</label></div></fieldset>
           <div className="grid gap-4 md:grid-cols-2">
             <Field name="titulo" label="Título" required maxLength={300} />
             <label className="space-y-2"><Label htmlFor="rag-prova">Prova</Label><select id="rag-prova" name="prova_id" defaultValue="" className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"><option value="">Material geral do concurso</option>{exams.map((exam) => <option key={exam.id} value={exam.id}>{exam.name}</option>)}</select></label>
             <label className="space-y-2"><Label htmlFor="rag-categoria-documental">Categoria documental</Label><select id="rag-categoria-documental" name="categoria_documental" defaultValue="" required className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"><option value="" disabled>Selecione a categoria</option><option value="EDITAL">Edital</option><option value="NORMA_OFICIAL">Norma oficial</option><option value="MANUAL_OFICIAL">Manual oficial</option><option value="DOCUMENTACAO_TECNICA_OFICIAL">Documentação técnica oficial</option><option value="PROVA_ANTERIOR">Prova anterior</option><option value="MATERIAL_EXPLICATIVO">Material explicativo</option><option value="OUTRO">Outro</option></select></label>
-            {mode === 'reference' ? <><label className="space-y-2"><Label htmlFor="rag-tipo-arquivo">Tipo de arquivo</Label><select id="rag-tipo-arquivo" name="tipo_arquivo" defaultValue="pdf" required className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"><option value="pdf">PDF</option><option value="txt">TXT</option><option value="md">Markdown</option></select></label><Field name="arquivo_origem" label="Nome do arquivo de origem" maxLength={500} /></> : <><label className="space-y-2"><Label htmlFor="rag-categoria">Categoria</Label><select id="rag-categoria" name="categoria" defaultValue="documentos_gerais" required className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"><option value="documentos_gerais">Documentos gerais</option><option value="edital">Edital</option></select></label><label className="space-y-2"><Label htmlFor="rag-arquivo">Arquivo</Label><Input id="rag-arquivo" name="arquivo" type="file" accept=".pdf,.txt,.md" required /></label></>}
+            {mode === 'reference' ? <><label className="space-y-2"><Label htmlFor="rag-tipo-arquivo">Tipo de arquivo</Label><select id="rag-tipo-arquivo" name="tipo_arquivo" defaultValue="pdf" required className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"><option value="pdf">PDF</option><option value="txt">TXT</option><option value="md">Markdown</option></select></label><Field name="arquivo_origem" label="Nome do arquivo de origem" maxLength={500} /></> : <><label className="space-y-2"><Label htmlFor="rag-categoria">Categoria</Label><select id="rag-categoria" name="categoria" defaultValue="documentos_gerais" required className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm"><option value="documentos_gerais">Documentos gerais</option><option value="edital">Edital</option></select></label><label className="space-y-2"><Label htmlFor="rag-arquivo">Arquivo</Label><Input id="rag-arquivo" name="arquivo" type="file" accept=".pdf,.txt,.md" required onChange={(event) => validateSelectedFile(event.currentTarget.files?.[0] ?? null)} /></label></>}
             <Field name="disciplina" label="Disciplina" maxLength={300} />
             <Field name="assunto" label="Assunto" maxLength={300} />
             <Field name="subassunto" label="Subassunto" maxLength={300} />
             {mode === 'reference' && <div className="md:col-span-2"><Field name="github_path" label="Caminho no GitHub" required maxLength={2000} placeholder="concursos/trt8/2022/documentos_gerais/arquivo.pdf" /></div>}
           </div>
-          <p className="text-xs text-muted-foreground">{mode === 'reference' ? 'O caminho será preservado exatamente após remover espaços nas extremidades.' : 'PDF, TXT ou Markdown, até 10 MiB. O servidor define o caminho e nunca sobrescreve arquivos.'}</p>
+          {uploadError && <p role="alert" className="text-sm text-destructive">{uploadError}</p>}
+          <p className="text-xs text-muted-foreground">{mode === 'reference' ? 'O caminho será preservado exatamente após remover espaços nas extremidades.' : 'PDF, TXT ou Markdown, até 25 MiB. O servidor define o caminho e nunca sobrescreve arquivos.'}</p>
           <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><SubmitButton uploading={mode === 'upload'} /></div>
         </form>
       </CardContent>

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { RagGitHubRequestError, validateGitHubMaterialPath, type GitHubMaterialWriter, type RagGitHubRequestErrorCode } from './github-loader'
+import { exceedsRagUploadLimit } from './upload-limits'
 import {
   ragMaterialBrowserInputSchema,
   registerRagMaterial,
@@ -8,7 +9,7 @@ import {
   type ValidatedRagMaterialInput,
 } from './admin-material'
 
-export const MAX_RAG_UPLOAD_BYTES = 10 * 1024 * 1024
+export { MAX_RAG_UPLOAD_BYTES } from './upload-limits'
 const ALLOWED_MIME: Record<'pdf' | 'txt' | 'md', readonly string[]> = {
   pdf: ['application/pdf'],
   txt: ['text/plain', 'application/octet-stream'],
@@ -64,10 +65,10 @@ export function buildRagUploadPath(context: RagUploadContestContext, category: '
 async function readAndValidateFile(file: RagUploadFile) {
   const { fileName, fileType } = validateRagUploadFileName(file.name)
   if (!Number.isSafeInteger(file.size) || file.size < 1) throw new RagMaterialUploadError('INVALID_FILE')
-  if (file.size > MAX_RAG_UPLOAD_BYTES) throw new RagMaterialUploadError('FILE_TOO_LARGE')
+  if (exceedsRagUploadLimit(file.size)) throw new RagMaterialUploadError('FILE_TOO_LARGE')
   const bytes = new Uint8Array(await file.arrayBuffer())
   if (bytes.byteLength < 1 || bytes.byteLength !== file.size) throw new RagMaterialUploadError('INVALID_FILE')
-  if (bytes.byteLength > MAX_RAG_UPLOAD_BYTES) throw new RagMaterialUploadError('FILE_TOO_LARGE')
+  if (exceedsRagUploadLimit(bytes.byteLength)) throw new RagMaterialUploadError('FILE_TOO_LARGE')
   if (file.type && !ALLOWED_MIME[fileType].includes(file.type.toLowerCase())) throw new RagMaterialUploadError('INVALID_FILE')
   if (fileType === 'pdf') {
     if (new TextDecoder('ascii').decode(bytes.slice(0, 5)) !== '%PDF-') throw new RagMaterialUploadError('INVALID_FILE')

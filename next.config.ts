@@ -4,7 +4,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ['pdfjs-dist'],
   experimental: {
-    serverActions: { bodySizeLimit: '11mb' },
+    proxyClientMaxBodySize: '30mb',
+    serverActions: { bodySizeLimit: '30mb' },
   },
   async headers() {
     const securityHeaders = [
