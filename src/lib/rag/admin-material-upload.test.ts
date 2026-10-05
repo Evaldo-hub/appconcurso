@@ -8,6 +8,7 @@ import {
   ragMaterialUploadMetadataSchema,
   RagMaterialUploadError,
   uploadAndRegisterRagMaterial,
+  validateRagUploadFileName,
   type RagMaterialUploadDependencies,
   type RagUploadFile,
 } from './admin-material-upload'
@@ -71,7 +72,24 @@ test('PDF válido realiza uma escrita GitHub e um insert de material, sem opera�
   assert.equal(state.inserted.length, 1)
   assert.equal(state.inserted[0]?.arquivo_origem, 'Revisão.pdf')
   assert.equal(state.inserted[0]?.categoria_documental, 'NORMA_OFICIAL')
-  assert.deepEqual(Object.keys(state.dependencies).sort(), ['github', 'loadContestContext', 'registration'])
+  assert.deepEqual(Object.keys(state.dependencies).sort(), ['github', 'loadContestContext', 'registration', 'uploadId'])
+})
+
+test('aceita nomes oficiais com vírgula sem ampliar a política de caracteres', () => {
+  for (const name of [
+    'LEI Nº 9.784 , DE 29 DE JANEIRO DE 1999.pdf',
+    'LEI Nº 8.112, DE 11 DE DEZEMBRO DE 1990.pdf',
+    'DECRETO-LEI Nº 5.452, DE 1º DE MAIO DE 1943.pdf',
+    'CONSTITUICAO 1988.pdf',
+  ]) {
+    assert.deepEqual(validateRagUploadFileName(name), { fileName: name, fileType: 'pdf' })
+  }
+})
+
+test('continua rejeitando traversal, separadores e NUL no nome do arquivo', () => {
+  for (const name of ['../arquivo.pdf', '..\\arquivo.pdf', 'pasta/arquivo.pdf', 'pasta\\arquivo.pdf', 'arquivo\0.pdf']) {
+    assert.throws(() => validateRagUploadFileName(name), (error) => error instanceof RagMaterialUploadError && error.code === 'INVALID_FILE')
+  }
 })
 
 test('aceita PDF no limite funcional de 25 MiB', async () => {

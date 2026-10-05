@@ -15,7 +15,7 @@ const ALLOWED_MIME: Record<'pdf' | 'txt' | 'md', readonly string[]> = {
   txt: ['text/plain', 'application/octet-stream'],
   md: ['text/markdown', 'text/plain', 'application/octet-stream'],
 }
-const FILE_NAME = /^[\p{L}\p{N}\p{M} ._()—+-]+$/u
+const FILE_NAME = /^[\p{L}\p{N}\p{M} ._(),—+-]+$/u
 
 export const ragMaterialUploadMetadataSchema = ragMaterialBrowserInputSchema
   .omit({ github_path: true, arquivo_origem: true, tipo_arquivo: true })
