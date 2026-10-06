@@ -54,15 +54,62 @@ test('persistência é independente de provider/model Groq', async () => {
   assert.equal(Object.keys(mock.state().parameters).some((key) => /provider|model/i.test(key)), false)
 })
 
-test('precheck atual rejeita fonte geral que a RPC considera elegível para prova específica', async () => {
+test('caso de produção aceita fontes gerais para concurso 15 e prova 65 e alcança a RPC', async () => {
   const mock = setup()
-  await assert.rejects(mock.persist({
+  await mock.persist({
     ...input,
     concursoId: 15,
     provaId: 65,
     resolvedSources: [{ ...source, concursoId: 15, provaId: null }],
+  })
+  assert.equal(mock.state().calls, 1)
+  assert.equal(mock.state().parameters.p_concurso_id, 15)
+  assert.equal(mock.state().parameters.p_prova_id, 65)
+})
+
+test('prova específica aceita escopo misto com fontes gerais e da mesma prova', async () => {
+  const mock = setup([{ questao_id: 99, status: 'cadastrada', fontes_inseridas: 2 }])
+  await mock.persist({
+    ...input,
+    question: { ...question, sourceIndexes: [1, 2] },
+    concursoId: 15,
+    provaId: 65,
+    resolvedSources: [
+      { ...source, sourceIndex: 1, documentId: 2830, concursoId: 15, provaId: null },
+      { ...source, sourceIndex: 2, documentId: 2831, concursoId: 15, provaId: 65 },
+    ],
+  })
+  assert.equal(mock.state().calls, 1)
+})
+
+test('prova específica rejeita fonte de outra prova mesmo junto de fontes válidas', async () => {
+  const mock = setup()
+  await assert.rejects(mock.persist({
+    ...input,
+    question: { ...question, sourceIndexes: [1, 2, 3] },
+    concursoId: 15,
+    provaId: 65,
+    resolvedSources: [
+      { ...source, sourceIndex: 1, documentId: 2830, concursoId: 15, provaId: null },
+      { ...source, sourceIndex: 2, documentId: 2831, concursoId: 15, provaId: 65 },
+      { ...source, sourceIndex: 3, documentId: 2832, concursoId: 15, provaId: 66 },
+    ],
   }), /RAG_PERSISTENCE_SCOPE_MISMATCH/)
   assert.equal(mock.state().calls, 0)
+})
+
+test('material geral aceita somente fonte geral', async () => {
+  const accepted = setup()
+  await accepted.persist({ ...input, provaId: null, resolvedSources: [{ ...source, provaId: null }] })
+  assert.equal(accepted.state().calls, 1)
+
+  const rejected = setup()
+  await assert.rejects(rejected.persist({
+    ...input,
+    provaId: null,
+    resolvedSources: [{ ...source, provaId: 65 }],
+  }), /RAG_PERSISTENCE_SCOPE_MISMATCH/)
+  assert.equal(rejected.state().calls, 0)
 })
 
 test('rejected bloqueia RPC', async () => {

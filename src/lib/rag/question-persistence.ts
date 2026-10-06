@@ -128,7 +128,10 @@ function precheck(input: ApprovedRagQuestionPersistenceInput) {
     if (!Number.isSafeInteger(source.chunkIndex) || source.chunkIndex < 0) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_CHUNK')
     if (source.pagina !== null && (!Number.isSafeInteger(source.pagina) || source.pagina < 1)) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_PAGE')
     if (!Number.isFinite(source.similarity)) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_SIMILARITY')
-    if (source.concursoId !== input.concursoId || source.provaId !== input.provaId) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_SCOPE_MISMATCH')
+    const sourceMatchesProofScope = input.provaId === null
+      ? source.provaId === null
+      : source.provaId === null || source.provaId === input.provaId
+    if (source.concursoId !== input.concursoId || !sourceMatchesProofScope) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_SCOPE_MISMATCH')
   }
 }
 
