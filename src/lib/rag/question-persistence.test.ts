@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import type { RagGeneratedQuestion, ResolvedGeneratedQuestionSource } from './generated-question'
-import { createApprovedRagQuestionPersistence } from './question-persistence'
+import { createApprovedRagQuestionPersistence, logRagQuestionPersistenceFailure } from './question-persistence'
 import type { RagQuestionValidationResult } from './question-validator'
 
 const question: RagGeneratedQuestion = {
@@ -23,7 +23,7 @@ const validation: RagQuestionValidationResult = {
 }
 const input = { question, resolvedSources: [source], semanticValidation: validation, concursoId: 7, provaId: null }
 
-function setup(data: unknown = [{ questao_id: 99, status: 'cadastrada', fontes_inseridas: 1 }], error: { message?: string } | null = null) {
+function setup(data: unknown = [{ questao_id: 99, status: 'cadastrada', fontes_inseridas: 1 }], error: { code?: string; message?: string; details?: string; hint?: string } | null = null) {
   let calls = 0
   let name = ''
   let parameters: Record<string, unknown> = {}
@@ -38,6 +38,31 @@ test('approved permite uma única chamada à RPC oficial', async () => {
   await mock.persist(input)
   assert.equal(mock.state().calls, 1)
   assert.equal(mock.state().name, 'persistir_questao_rag_aprovada')
+})
+
+test('persistência é independente de provider/model Groq', async () => {
+  const mock = setup()
+  await mock.persist({
+    ...input,
+    concursoId: 15,
+    provaId: 65,
+    resolvedSources: [{ ...source, concursoId: 15, provaId: 65 }],
+    semanticValidation: { ...validation, validation: { provider: 'groq', model: 'openai/gpt-oss-120b' } },
+  })
+  assert.equal(mock.state().parameters.p_concurso_id, 15)
+  assert.equal(mock.state().parameters.p_prova_id, 65)
+  assert.equal(Object.keys(mock.state().parameters).some((key) => /provider|model/i.test(key)), false)
+})
+
+test('precheck atual rejeita fonte geral que a RPC considera elegível para prova específica', async () => {
+  const mock = setup()
+  await assert.rejects(mock.persist({
+    ...input,
+    concursoId: 15,
+    provaId: 65,
+    resolvedSources: [{ ...source, concursoId: 15, provaId: null }],
+  }), /RAG_PERSISTENCE_SCOPE_MISMATCH/)
+  assert.equal(mock.state().calls, 0)
 })
 
 test('rejected bloqueia RPC', async () => {
@@ -127,6 +152,33 @@ test('erro RPC é sanitizado sem segredo', async () => {
     assert.doesNotMatch((error as Error).message, /segredo|service_role/)
     return true
   })
+})
+
+test('diagnóstico RPC preserva código e estágio sem expor segredo', async () => {
+  const secret = 'sb_secret_NAO_EXIBIR'
+  const originalSecret = process.env.SUPABASE_SECRET_KEY
+  const originalError = console.error
+  const calls: unknown[][] = []
+  process.env.SUPABASE_SECRET_KEY = secret
+  console.error = (...args: unknown[]) => { calls.push(args) }
+  try {
+    await assert.rejects(
+      setup(null, { message: `violação ${secret}`, code: '23503', details: `Bearer ${secret}`, hint: 'verifique a FK' }).persist(input),
+      (error: unknown) => {
+        logRagQuestionPersistenceFailure(error, { concursoId: 15, provaId: 65, sourceCount: 6, sourceProofIds: [null, null, null, null, null, null] })
+        return true
+      },
+    )
+  } finally {
+    console.error = originalError
+    if (originalSecret === undefined) delete process.env.SUPABASE_SECRET_KEY
+    else process.env.SUPABASE_SECRET_KEY = originalSecret
+  }
+  const serialized = JSON.stringify(calls)
+  assert.match(serialized, /rpc_response/)
+  assert.match(serialized, /23503/)
+  assert.match(serialized, /general/)
+  assert.doesNotMatch(serialized, new RegExp(secret))
 })
 
 test('migration proposta mantém atomicidade, invoker e política conservadora', async () => {

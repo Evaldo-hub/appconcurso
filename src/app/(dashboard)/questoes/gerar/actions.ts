@@ -9,7 +9,7 @@ import { createRagGenerationContextBuilder } from '@/lib/rag/generation-context'
 import { createRagQuestionGenerator, generateRagQuestionWithProviderFallback, QuestionAiUnavailableError } from '@/lib/rag/question-generator'
 import { validateSourceCitationIntegrity } from '@/lib/rag/generated-question'
 import { RagQuestionValidationError, validateRagGeneratedQuestion } from '@/lib/rag/question-validator'
-import { persistApprovedRagQuestion } from '@/lib/rag/question-persistence'
+import { logRagQuestionPersistenceFailure, persistApprovedRagQuestion } from '@/lib/rag/question-persistence'
 import { GeminiGenerationError } from '@/lib/ai/gemini'
 import { classifyGeminiGenerationFailure, logStudyRagProviderError } from '@/lib/ai/gemini-provider-diagnostics'
 import { createSubmitStudyAnswer, type AnswerLetter, type StudyAnswerPersistenceResult } from '@/lib/study/submit-study-answer'
@@ -61,8 +61,18 @@ async function executeProductionBatch(input: StudyQuestionInput, board: string) 
     if (semantic.finalVerdict !== 'approved') throw new StudyQuestionAttemptError('REJECTED')
 
     let persistence
+    console.info('study_rag_persistence', {
+      event: 'persistence_started', rpc: 'persistir_questao_rag_aprovada',
+      concurso_id: input.concurso_id, prova_id: input.prova_id, source_count: generated.resolvedSources.length,
+    })
     try { persistence = await persistApprovedRagQuestion({ question: generated.question, resolvedSources: generated.resolvedSources, semanticValidation: semantic, concursoId: input.concurso_id, provaId: input.prova_id }) }
-    catch { throw new StudyQuestionAttemptError('PERSISTENCE_FAILURE') }
+    catch (error) {
+      logRagQuestionPersistenceFailure(error, {
+        concursoId: input.concurso_id, provaId: input.prova_id, sourceCount: generated.resolvedSources.length,
+        sourceProofIds: generated.resolvedSources.map((source) => source.provaId),
+      })
+      throw new StudyQuestionAttemptError('PERSISTENCE_FAILURE')
+    }
     console.info('study_rag_batch', { event: 'persistence_result', attempt_number: attempt, status: persistence.status, questao_id: persistence.questaoId })
     return {
       attempt, questao_id: persistence.questaoId, status: persistence.status === 'cadastrada' ? 'created' : 'duplicate',

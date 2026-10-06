@@ -20,14 +20,71 @@ export interface RagQuestionPersistenceResult {
 }
 
 export interface RagQuestionPersistenceRpcClient {
-  rpc(name: string, parameters: Record<string, unknown>): PromiseLike<{ data: unknown; error: { message?: string } | null }>
+  rpc(name: string, parameters: Record<string, unknown>): PromiseLike<{
+    data: unknown
+    error: { code?: string; message?: string; details?: string; hint?: string } | null
+  }>
 }
 
+export type RagQuestionPersistenceStage = 'precheck' | 'rpc_transport' | 'rpc_response' | 'rpc_result'
+
 export class RagQuestionPersistenceError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly diagnostics: {
+      stage: RagQuestionPersistenceStage
+      databaseCode?: string
+      databaseMessage?: string
+      databaseDetails?: string
+      databaseHint?: string
+    } = { stage: 'precheck' },
+  ) {
     super(message)
     this.name = 'RagQuestionPersistenceError'
   }
+}
+
+const DIAGNOSTIC_TEXT_LIMIT = 500
+
+function safeDiagnosticText(value: unknown) {
+  if (typeof value !== 'string') return undefined
+  let sanitized = value
+  for (const secret of [process.env.SUPABASE_SECRET_KEY, process.env.SUPABASE_SERVICE_ROLE_KEY]) {
+    if (secret) sanitized = sanitized.replaceAll(secret, '[REDACTED]')
+  }
+  sanitized = sanitized
+    .replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/sb_secret_[A-Za-z0-9_-]+/g, '[REDACTED]')
+    .replace(/[\r\n\t]+/g, ' ')
+    .trim()
+  return sanitized ? sanitized.slice(0, DIAGNOSTIC_TEXT_LIMIT) : undefined
+}
+
+export function logRagQuestionPersistenceFailure(
+  error: unknown,
+  context: { concursoId: number; provaId: number | null; sourceCount: number; sourceProofIds: Array<number | null> },
+) {
+  const persistenceError = error instanceof RagQuestionPersistenceError ? error : null
+  const uniqueProofIds = [...new Set(context.sourceProofIds)]
+  console.error('study_rag_persistence', {
+    event: 'persistence_failed',
+    rpc: 'persistir_questao_rag_aprovada',
+    stage: persistenceError?.diagnostics.stage ?? 'unknown',
+    error_name: error instanceof Error ? error.name : 'UnknownPersistenceError',
+    error_code: persistenceError?.message ?? 'RAG_PERSISTENCE_UNKNOWN_FAILURE',
+    database_code: safeDiagnosticText(persistenceError?.diagnostics.databaseCode),
+    database_message: safeDiagnosticText(persistenceError?.diagnostics.databaseMessage),
+    database_details: safeDiagnosticText(persistenceError?.diagnostics.databaseDetails),
+    database_hint: safeDiagnosticText(persistenceError?.diagnostics.databaseHint),
+    concurso_id: context.concursoId,
+    prova_id: context.provaId,
+    source_count: context.sourceCount,
+    source_proof_scope: uniqueProofIds.every((id) => id === null)
+      ? 'general'
+      : uniqueProofIds.every((id) => id === context.provaId)
+        ? 'specific'
+        : 'mixed',
+  })
 }
 
 function positiveInteger(value: unknown): value is number {
@@ -77,13 +134,13 @@ function precheck(input: ApprovedRagQuestionPersistenceInput) {
 
 function parseResult(data: unknown, expectedSources: number): RagQuestionPersistenceResult {
   const candidate = Array.isArray(data) && data.length === 1 ? data[0] : data
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_RPC_RESULT')
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_RPC_RESULT', { stage: 'rpc_result' })
   const row = candidate as Record<string, unknown>
   if (!positiveInteger(row.questao_id) || (row.status !== 'cadastrada' && row.status !== 'duplicada')
     || typeof row.fontes_inseridas !== 'number' || !Number.isSafeInteger(row.fontes_inseridas) || row.fontes_inseridas < 0
     || (row.status === 'duplicada' && row.fontes_inseridas !== 0)
     || (row.status === 'cadastrada' && row.fontes_inseridas !== expectedSources)) {
-    throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_RPC_RESULT')
+    throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_RPC_RESULT', { stage: 'rpc_result' })
   }
   return { questaoId: row.questao_id, status: row.status as 'cadastrada' | 'duplicada', fontesInseridas: row.fontes_inseridas }
 }
@@ -97,7 +154,7 @@ export function createApprovedRagQuestionPersistence(
     const question = input.question
     const hashQuestao = (dependencies.hash ?? createQuestionHash)(input)
     if (!/^[0-9a-f]{64}$/.test(hashQuestao)) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_INVALID_HASH')
-    let response: { data: unknown; error: { message?: string } | null }
+    let response: { data: unknown; error: { code?: string; message?: string; details?: string; hint?: string } | null }
     try {
       response = await rpc.rpc('persistir_questao_rag_aprovada', {
         p_concurso_id: input.concursoId,
@@ -120,9 +177,15 @@ export function createApprovedRagQuestionPersistence(
         p_document_ids: input.resolvedSources.map((source) => source.documentId),
       })
     } catch {
-      throw new RagQuestionPersistenceError('RAG_PERSISTENCE_RPC_FAILED')
+      throw new RagQuestionPersistenceError('RAG_PERSISTENCE_RPC_FAILED', { stage: 'rpc_transport' })
     }
-    if (response.error) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_RPC_FAILED')
+    if (response.error) throw new RagQuestionPersistenceError('RAG_PERSISTENCE_RPC_FAILED', {
+      stage: 'rpc_response',
+      databaseCode: response.error.code,
+      databaseMessage: response.error.message,
+      databaseDetails: response.error.details,
+      databaseHint: response.error.hint,
+    })
     return parseResult(response.data, input.resolvedSources.length)
   }
 }
