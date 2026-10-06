@@ -23,7 +23,7 @@ export interface StudyQuestionBatchResult {
 export type StudyQuestionActionResult = { ok: true; batch: StudyQuestionBatchResult } | { ok: false; code: StudyFlowErrorCode }
 
 export class StudyQuestionAttemptError extends Error {
-  constructor(readonly code: 'REJECTED' | 'PROVIDER_FAILURE' | 'PERSISTENCE_FAILURE') { super(code) }
+  constructor(readonly code: 'REJECTED' | 'PROVIDER_FAILURE' | 'AI_PROVIDER_UNAVAILABLE' | 'PERSISTENCE_FAILURE') { super(code) }
 }
 
 export const maxBatchAttempts = (quantity: number) => quantity === 1 ? 1 : quantity === 5 ? 7 : quantity === 10 ? 13 : 0

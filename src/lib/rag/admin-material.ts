@@ -19,7 +19,7 @@ export const ragMaterialBrowserInputSchema = z.object({
     }
     return parsed
   }),
-  disciplina: optionalText(300),
+  disciplina: z.string().trim().min(1).max(300),
   assunto: optionalText(300),
   subassunto: optionalText(300),
   arquivo_origem: optionalText(500),
@@ -40,6 +40,7 @@ export type RagMaterialInsertRow = { id: number }
 export interface RagMaterialRegistrationRepository {
   contestExists(concursoId: number): Promise<boolean>
   examBelongsToContest(provaId: number, concursoId: number): Promise<boolean>
+  disciplineBelongsToSelection(discipline: string, concursoId: number, provaId: number | null): Promise<boolean>
   duplicateExists(concursoId: number, provaId: number | null, githubPath: string): Promise<boolean>
   insertMaterial(material: RagMaterialInsert): Promise<RagMaterialInsertRow>
 }
@@ -49,9 +50,9 @@ export interface ExistingGitHubFileChecker {
 }
 
 export class RagMaterialRegistrationError extends Error {
-  readonly code: 'INVALID_CONTEST' | 'INVALID_EXAM' | 'DUPLICATE' | 'GITHUB_FILE_NOT_FOUND' | 'GITHUB_FILE_CHECK_FAILED' | 'INSERT_FAILED'
+  readonly code: 'INVALID_CONTEST' | 'INVALID_EXAM' | 'INVALID_DISCIPLINE' | 'DUPLICATE' | 'GITHUB_FILE_NOT_FOUND' | 'GITHUB_FILE_CHECK_FAILED' | 'INSERT_FAILED'
 
-  constructor(code: 'INVALID_CONTEST' | 'INVALID_EXAM' | 'DUPLICATE' | 'GITHUB_FILE_NOT_FOUND' | 'GITHUB_FILE_CHECK_FAILED' | 'INSERT_FAILED') {
+  constructor(code: 'INVALID_CONTEST' | 'INVALID_EXAM' | 'INVALID_DISCIPLINE' | 'DUPLICATE' | 'GITHUB_FILE_NOT_FOUND' | 'GITHUB_FILE_CHECK_FAILED' | 'INSERT_FAILED') {
     super(code)
     this.code = code
     this.name = 'RagMaterialRegistrationError'
@@ -111,6 +112,9 @@ export async function validateRagMaterialRegistration(
   }
   if (input.prova_id !== null && !(await repository.examBelongsToContest(input.prova_id, concursoId))) {
     throw new RagMaterialRegistrationError('INVALID_EXAM')
+  }
+  if (!(await repository.disciplineBelongsToSelection(input.disciplina, concursoId, input.prova_id))) {
+    throw new RagMaterialRegistrationError('INVALID_DISCIPLINE')
   }
   if (await repository.duplicateExists(concursoId, input.prova_id, input.github_path)) {
     throw new RagMaterialRegistrationError('DUPLICATE')

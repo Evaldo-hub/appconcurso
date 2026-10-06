@@ -6,7 +6,7 @@ import { loadRagSelectionCatalog } from '@/lib/study/rag-selection-catalog'
 import { createStudyQuestionFlow, generateStudyQuestionBatch, StudyQuestionAttemptError, type SafeStudyQuestion, type StudyQuestionInput } from '@/lib/study/generate-study-question'
 import { RagRetrievalError, retrieveRagContext } from '@/lib/rag/retrieval'
 import { createRagGenerationContextBuilder } from '@/lib/rag/generation-context'
-import { createRagQuestionGenerator, generateRagQuestionWithConfiguredGemini } from '@/lib/rag/question-generator'
+import { createRagQuestionGenerator, generateRagQuestionWithProviderFallback, QuestionAiUnavailableError } from '@/lib/rag/question-generator'
 import { validateSourceCitationIntegrity } from '@/lib/rag/generated-question'
 import { RagQuestionValidationError, validateRagGeneratedQuestion } from '@/lib/rag/question-validator'
 import { persistApprovedRagQuestion } from '@/lib/rag/question-persistence'
@@ -33,7 +33,7 @@ async function executeProductionBatch(input: StudyQuestionInput, board: string) 
   const context = await createRagGenerationContextBuilder(async () => retrieval)({ query, concursoId: input.concurso_id, provaId: input.prova_id })
   console.info('study_rag_batch', { event: 'retrieval_finished', source_count: context.sourceCount, retrieval_strategy: 'SHARED_REQUEST_CONTEXT' })
 
-  const generator = createRagQuestionGenerator({ buildContext: async () => context, generate: generateRagQuestionWithConfiguredGemini })
+  const generator = createRagQuestionGenerator({ buildContext: async () => context, generate: generateRagQuestionWithProviderFallback })
 
   const result = await generateStudyQuestionBatch(input.quantidade, async (attempt): Promise<SafeStudyQuestion> => {
     console.info('study_rag_batch', { event: 'attempt_started', attempt_number: attempt })
@@ -43,7 +43,7 @@ async function executeProductionBatch(input: StudyQuestionInput, board: string) 
     } catch (error) {
       console.info('study_rag_batch', { event: 'generation_result', attempt_number: attempt, passed: false })
       if (error instanceof GeminiGenerationError) logStudyRagProviderError('question_generation', error)
-      throw new StudyQuestionAttemptError(classifyGeminiGenerationFailure(error))
+      throw new StudyQuestionAttemptError(error instanceof QuestionAiUnavailableError ? 'AI_PROVIDER_UNAVAILABLE' : classifyGeminiGenerationFailure(error))
     }
     const citation = validateSourceCitationIntegrity(generated.question)
     console.info('study_rag_batch', { event: 'generation_result', attempt_number: attempt, passed: true, model: generated.generation.model })

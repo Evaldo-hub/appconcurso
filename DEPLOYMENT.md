@@ -28,7 +28,7 @@ O repositório inclui um `render.yaml` para criar um Web Service Node.js. No pai
 
 1. Envie este projeto para um repositório GitHub/GitLab/Bitbucket.
 2. Selecione **New > Blueprint** e conecte o repositório.
-3. Preencha as variáveis solicitadas sem gravar segredos no Git.
+3. Preencha as variáveis solicitadas sem gravar segredos no Git. Para IA no servidor, configure `GEMINI_API_KEY` e `GROQ_API_KEY`. Configure também `GEMINI_MODEL=gemini-3.5-flash-lite` para preservar o modelo atualmente usado pelo ambiente e, opcionalmente, `GROQ_MODEL=openai/gpt-oss-120b` (este já é o default do código). Não use o prefixo `NEXT_PUBLIC_` nessas variáveis.
 4. Use em `NEXT_PUBLIC_APP_URL` a URL HTTPS final, por exemplo `https://plataforma-concursos.onrender.com`.
 5. Confirme a criação e aguarde o health check em `/api/health`.
 

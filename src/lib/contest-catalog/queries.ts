@@ -1,5 +1,6 @@
 import 'server-only'
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -37,13 +38,17 @@ export async function listarProvasDoConcurso(contestId: number): Promise<Normali
   }))
 }
 
-async function loadTaxonomy(contestId: number) {
-  const admin = createAdminClient()
+export async function loadNormalizedTaxonomyForContest(admin: SupabaseClient, contestId: number) {
   const [linksResult, contentsResult] = await Promise.all([
     admin.from('prova_conteudos')
       .select('prova_id, conteudo_id, concurso_id, ativo, disciplina_ordem, assunto_ordem, subassunto_ordem, ordem')
       .eq('concurso_id', contestId)
       .eq('ativo', true)
+      .order('prova_id', { ascending: true })
+      .order('disciplina_ordem', { ascending: true, nullsFirst: false })
+      .order('assunto_ordem', { ascending: true, nullsFirst: false })
+      .order('subassunto_ordem', { ascending: true, nullsFirst: false })
+      .order('ordem', { ascending: true, nullsFirst: false })
       .range(0, 4999),
     admin.from('conteudos_catalogo')
       .select('id, concurso_id, disciplina, assunto, subassunto, ativo')
@@ -75,7 +80,7 @@ export async function loadAuthorizedNormalizedCatalogBySlug(slug: string): Promi
   if (accessError || allowed !== true) return { catalog: emptyCatalog, error: 'Você não possui acesso a este concurso.' }
 
   try {
-    const [exams, taxonomy] = await Promise.all([listarProvasDoConcurso(contestId), loadTaxonomy(contestId)])
+    const [exams, taxonomy] = await Promise.all([listarProvasDoConcurso(contestId), loadNormalizedTaxonomyForContest(admin, contestId)])
     const contest: NormalizedSelectionContest = {
       id: contestId,
       slug: normalizedText(contestRow.slug),

@@ -20,3 +20,12 @@ NEXT_PUBLIC_TELEGRAM_BOT_USERNAME=your_bot_username
 
 # Apenas no servidor Next.js durante testes locais
 SUPABASE_SECRET_KEY=sb_secret_your_key
+
+# IA no servidor Next.js (nunca usar prefixo NEXT_PUBLIC_)
+GEMINI_API_KEY=your_gemini_api_key
+# Opcional; sem esta variável, o código usa o modelo Gemini padrão.
+GEMINI_MODEL=gemini-3.5-flash-lite
+# Necessária para habilitar o fallback de geração textual.
+GROQ_API_KEY=your_groq_api_key
+# Opcional; default do código: openai/gpt-oss-120b.
+GROQ_MODEL=openai/gpt-oss-120b

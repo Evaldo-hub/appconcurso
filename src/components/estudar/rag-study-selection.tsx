@@ -95,7 +95,9 @@ function BatchQuestions({ batch, currentIndex, setCurrentIndex, answers, setAnsw
   useEffect(() => {
     if (currentQuestionId && visibleSince.current[currentQuestionId] === undefined) visibleSince.current[currentQuestionId] = Date.now()
   }, [currentQuestionId])
-  if (batch.questions.length === 0) return <Alert variant="destructive">Não foi possível concluir nenhuma questão neste lote.</Alert>
+  if (batch.questions.length === 0) return <Alert variant="destructive">{batch.stoppedReason === 'AI_PROVIDER_UNAVAILABLE'
+    ? 'Os serviços de IA estão temporariamente indisponíveis. O conteúdo RAG foi encontrado, mas não foi possível gerar a questão agora.'
+    : 'Não foi possível concluir nenhuma questão neste lote.'}</Alert>
   const question = batch.questions[currentIndex]
   const state = answers[question.questao_id] ?? emptyStudyAnswerState()
   const summary = summarizeStudyAnswers(batch.questions.map((item) => item.questao_id), answers)

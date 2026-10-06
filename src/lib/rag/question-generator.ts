@@ -1,7 +1,8 @@
 import 'server-only'
 
 import { z } from 'zod'
-import { generateWithGemini, getConfiguredGeminiModel, type GeminiGenerationTelemetry, type GeminiGenerateOptions } from '@/lib/ai/gemini'
+import { GeminiGenerationError, generateWithGemini, getConfiguredGeminiModel, type GeminiGenerationTelemetry, type GeminiGenerateOptions } from '@/lib/ai/gemini'
+import { generateWithGroq, getConfiguredGroqModel, GroqGenerationError } from '@/lib/ai/groq'
 import { parseRagGeneratedQuestion, resolveGeneratedQuestionSources } from './generated-question'
 import { buildRagGenerationContext, type RagGenerationContext } from './generation-context'
 import type { RagRetrievalInput } from './types'
@@ -46,6 +47,26 @@ export class RagQuestionGenerationError extends Error {
     super(message)
     this.name = 'RagQuestionGenerationError'
   }
+}
+
+export class QuestionAiUnavailableError extends Error {
+  constructor(
+    readonly primary: { provider: 'gemini'; status?: number; errorName: string },
+    readonly fallback: { provider: 'groq'; status?: number; errorName: string; attempted: boolean },
+  ) {
+    super('Os serviços de IA estão temporariamente indisponíveis. O conteúdo RAG foi encontrado, mas não foi possível gerar a questão agora.')
+    this.name = 'QuestionAiUnavailableError'
+  }
+}
+
+const FALLBACK_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504])
+
+export function isQuestionGenerationFallbackAllowed(error: unknown) {
+  if (!(error instanceof GeminiGenerationError)) return false
+  if (error.httpStatus !== undefined && FALLBACK_HTTP_STATUSES.has(error.httpStatus)) return true
+  const message = error.message.toLowerCase()
+  return error.httpStatus === undefined || message.includes('high demand') || message.includes('temporarily unavailable')
+    || message.includes('overloaded') || message.includes('resposta vazia') || message.includes('tempo limite')
 }
 
 function createPrompt(input: z.output<typeof generationInputSchema>, contextText: string) {
@@ -149,7 +170,73 @@ export async function generateRagQuestionWithConfiguredGemini(
   return { text, provider: 'gemini', model: respondingModel, telemetry }
 }
 
+export interface QuestionProviderFallbackDependencies {
+  primary: (prompt: string) => Promise<RagTextGenerationResult>
+  fallback: (prompt: string) => Promise<RagTextGenerationResult>
+  sleep?: (delayMs: number) => Promise<void>
+  fallbackConfigured?: () => boolean
+  logger?: Pick<Console, 'info' | 'warn' | 'error'>
+}
+
+export function createRagQuestionProviderFallback(dependencies: QuestionProviderFallbackDependencies) {
+  return async function generateWithProviderFallback(prompt: string): Promise<RagTextGenerationResult> {
+    const logger = dependencies.logger ?? console
+    logger.info('[QUESTION_AI][PRIMARY_START]', { provider: 'gemini' })
+    try {
+      const result = await dependencies.primary(prompt)
+      logger.info('[QUESTION_AI][PRIMARY_SUCCESS]', { provider: 'gemini', model: result.model })
+      return result
+    } catch (primaryError) {
+      const fallbackAllowed = isQuestionGenerationFallbackAllowed(primaryError)
+      const primaryStatus = primaryError instanceof GeminiGenerationError ? primaryError.httpStatus : undefined
+      logger.warn('[QUESTION_AI][PRIMARY_FAILED]', {
+        provider: 'gemini', error_name: primaryError instanceof Error ? primaryError.name : 'UnknownError',
+        http_status: primaryStatus, fallback_allowed: fallbackAllowed,
+      })
+      if (!fallbackAllowed) throw primaryError
+
+      if (!(dependencies.fallbackConfigured?.() ?? Boolean(process.env.GROQ_API_KEY?.trim()))) {
+        logger.error('[QUESTION_AI][ALL_PROVIDERS_FAILED]', { primary_provider: 'gemini', fallback_provider: 'groq', fallback_reason: 'NOT_CONFIGURED' })
+        throw new QuestionAiUnavailableError(
+          { provider: 'gemini', status: primaryStatus, errorName: primaryError instanceof Error ? primaryError.name : 'UnknownError' },
+          { provider: 'groq', errorName: 'FALLBACK_PROVIDER_NOT_CONFIGURED', attempted: false },
+        )
+      }
+
+      logger.info('[QUESTION_AI][FALLBACK_START]', { provider: 'groq' })
+      let fallbackError: unknown
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const result = await dependencies.fallback(prompt)
+          logger.info('[QUESTION_AI][FALLBACK_SUCCESS]', { provider: 'groq', model: result.model, attempts: attempt })
+          return result
+        } catch (error) {
+          fallbackError = error
+          if (!(error instanceof GroqGenerationError) || !error.details.retryable || attempt === 2) break
+          await (dependencies.sleep ?? ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs))))(500)
+        }
+      }
+      logger.error('[QUESTION_AI][ALL_PROVIDERS_FAILED]', {
+        primary_provider: 'gemini', primary_http_status: primaryStatus, fallback_provider: 'groq',
+        fallback_http_status: fallbackError instanceof GroqGenerationError ? fallbackError.details.httpStatus : undefined,
+      })
+      throw new QuestionAiUnavailableError(
+        { provider: 'gemini', status: primaryStatus, errorName: primaryError instanceof Error ? primaryError.name : 'UnknownError' },
+        { provider: 'groq', status: fallbackError instanceof GroqGenerationError ? fallbackError.details.httpStatus : undefined, errorName: fallbackError instanceof Error ? fallbackError.name : 'UnknownError', attempted: true },
+      )
+    }
+  }
+}
+
+export const generateRagQuestionWithProviderFallback = createRagQuestionProviderFallback({
+  primary: generateRagQuestionWithConfiguredGemini,
+  async fallback(prompt) {
+    const text = await generateWithGroq({ prompt, temperature: 0.2, responseFormat: 'json' })
+    return { text, provider: 'groq', model: getConfiguredGroqModel() }
+  },
+})
+
 export const generateRagQuestion = createRagQuestionGenerator({
   buildContext: buildRagGenerationContext,
-  generate: generateRagQuestionWithConfiguredGemini,
+  generate: generateRagQuestionWithProviderFallback,
 })

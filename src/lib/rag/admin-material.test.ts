@@ -30,6 +30,7 @@ function repository(overrides: Partial<RagMaterialRegistrationRepository> = {}) 
   const repo: RagMaterialRegistrationRepository = {
     contestExists: async () => true,
     examBelongsToContest: async () => true,
+    disciplineBelongsToSelection: async () => true,
     duplicateExists: async () => false,
     insertMaterial: async (material) => { inserted.push(material); return { id: 17 } },
     ...overrides,
@@ -42,6 +43,8 @@ test('aceita input válido, preserva Unicode e aplica trim sem transformar o pat
   assert.equal(result.titulo, 'Constituição comentada')
   assert.equal(result.github_path, 'concursos/trt8/2022/documentos_gerais/D. Const/Constituição.pdf')
   assert.equal(result.disciplina, 'Direito Constitucional')
+  assert.equal(result.assunto, null)
+  assert.equal(result.subassunto, null)
   assert.equal(result.prova_id, null)
   assert.equal(result.categoria_documental, 'EDITAL')
 })
@@ -57,11 +60,18 @@ test('categoria documental é obrigatória e validada no servidor', () => {
 
 test('formulário exige seleção explícita e oferece os valores exatos do banco', async () => {
   const source = await readFile('src/app/(dashboard)/admin/concursos/[id]/new-rag-material-form.tsx', 'utf8')
+  assert.match(source, />Categoria documental<\/Label>/)
   assert.match(source, /name="categoria_documental"[^>]*defaultValue=""[^>]*required/)
   assert.match(source, /<option value="" disabled>Selecione a categoria<\/option>/)
   for (const category of ['EDITAL', 'NORMA_OFICIAL', 'MANUAL_OFICIAL', 'DOCUMENTACAO_TECNICA_OFICIAL', 'PROVA_ANTERIOR', 'MATERIAL_EXPLICATIVO', 'OUTRO']) {
     assert.match(source, new RegExp(`<option value="${category}">`))
   }
+  assert.match(source, /name="categoria"[^>]*defaultValue="documentos_gerais"[^>]*required/)
+  assert.match(source, /name="categoria_documental"[\s\S]*\{mode === 'reference'/)
+  assert.doesNotMatch(source, /name="categoria_documental"[^>]*defaultValue="OUTRO"/)
+  assert.match(source, /name="disciplina"[\s\S]*?required/)
+  assert.match(source, /<option value="" disabled>Selecione a disciplina<\/option>/)
+  assert.doesNotMatch(source, /<Field name="disciplina"/)
 })
 
 test('rejeita campo obrigatório vazio e paths claramente inválidos', () => {
@@ -88,6 +98,29 @@ test('aceita prova pertencente ao concurso e rejeita prova cross-concurso', asyn
   const rejected = repository({ examBelongsToContest: async () => false })
   await assert.rejects(registerRagMaterial(rejected.repo, 7, input), (error) => error instanceof RagMaterialRegistrationError && error.code === 'INVALID_EXAM')
   assert.equal(rejected.inserted.length, 0)
+})
+
+test('valida disciplina canônica no servidor para prova específica e material geral', async () => {
+  const specific = ragMaterialBrowserInputSchema.parse({ ...rawInput, prova_id: '22', disciplina: 'Disciplina canônica' })
+  const accepted = repository({
+    disciplineBelongsToSelection: async (discipline, contestId, proofId) => discipline === 'Disciplina canônica' && contestId === 7 && proofId === 22,
+  })
+  await registerRagMaterial(accepted.repo, 7, specific)
+  assert.equal(accepted.inserted[0]?.disciplina, 'Disciplina canônica')
+
+  const invalid = repository({ disciplineBelongsToSelection: async () => false })
+  await assert.rejects(registerRagMaterial(invalid.repo, 7, specific), (error) => error instanceof RagMaterialRegistrationError && error.code === 'INVALID_DISCIPLINE')
+  assert.equal(invalid.inserted.length, 0)
+
+  const otherProof = repository({ disciplineBelongsToSelection: async (_discipline, _contestId, proofId) => proofId === 23 })
+  await assert.rejects(registerRagMaterial(otherProof.repo, 7, specific), (error) => error instanceof RagMaterialRegistrationError && error.code === 'INVALID_DISCIPLINE')
+
+  const general = ragMaterialBrowserInputSchema.parse({ ...rawInput, prova_id: '', disciplina: 'Disciplina compartilhada' })
+  const generalAccepted = repository({
+    disciplineBelongsToSelection: async (discipline, contestId, proofId) => discipline === 'Disciplina compartilhada' && contestId === 7 && proofId === null,
+  })
+  await registerRagMaterial(generalAccepted.repo, 7, general)
+  assert.equal(generalAccepted.inserted[0]?.disciplina, 'Disciplina compartilhada')
 })
 
 test('bloqueia duplicidade antes do insert', async () => {
@@ -168,7 +201,7 @@ test('novo material sem ingestão fica PENDING, com zero documents, sem alterar 
 
 test('contrato de cadastro não oferece operações de ingestão, embeddings ou documents', () => {
   const { repo } = repository()
-  assert.deepEqual(Object.keys(repo).sort(), ['contestExists', 'duplicateExists', 'examBelongsToContest', 'insertMaterial'])
+  assert.deepEqual(Object.keys(repo).sort(), ['contestExists', 'disciplineBelongsToSelection', 'duplicateExists', 'examBelongsToContest', 'insertMaterial'])
   const input: ValidatedRagMaterialInput = ragMaterialBrowserInputSchema.parse(rawInput)
   assert.equal('concurso_id' in input, false)
 })

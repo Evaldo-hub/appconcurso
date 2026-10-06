@@ -84,17 +84,25 @@ function orderedDistinct(
   value: (row: NormalizedSelectionTaxonomy) => string | null,
   order: (row: NormalizedSelectionTaxonomy) => number | null,
 ) {
-  const values = new Map<string, number>()
-  for (const row of rows) {
+  const values = new Map<string, { order: number; firstPosition: number }>()
+  rows.forEach((row, position) => {
     const text = value(row)?.trim()
-    if (!text) continue
-    values.set(text, Math.min(values.get(text) ?? Number.MAX_SAFE_INTEGER, order(row) ?? Number.MAX_SAFE_INTEGER))
-  }
-  return [...values].sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0], 'pt-BR')).map(([text]) => text)
+    if (!text) return
+    const current = values.get(text)
+    values.set(text, {
+      order: Math.min(current?.order ?? Number.MAX_SAFE_INTEGER, order(row) ?? Number.MAX_SAFE_INTEGER),
+      firstPosition: current?.firstPosition ?? position,
+    })
+  })
+  return [...values].sort((left, right) => left[1].order - right[1].order || left[1].firstPosition - right[1].firstPosition).map(([text]) => text)
 }
 
 export function listarDisciplinasDaProva(catalog: NormalizedSelectionCatalog, examId: number) {
   return orderedDistinct(catalog.taxonomy.filter((row) => row.examId === examId), (row) => row.discipline, (row) => row.disciplineOrder ?? row.order)
+}
+
+export function listarDisciplinasDoConcurso(catalog: NormalizedSelectionCatalog, contestId: number) {
+  return orderedDistinct(catalog.taxonomy.filter((row) => row.contestId === contestId), (row) => row.discipline, (row) => row.disciplineOrder ?? row.order)
 }
 
 export function listarAssuntosDaProva(catalog: NormalizedSelectionCatalog, examId: number, discipline: string) {

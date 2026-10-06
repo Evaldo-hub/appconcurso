@@ -12,6 +12,17 @@ NEXT_PUBLIC_APP_URL=http://localhost:3001
 
 Nunca coloque `service_role`, senhas do banco ou chaves do n8n em variáveis `NEXT_PUBLIC_*`.
 
+Para geração textual e embeddings no servidor Next.js, configure:
+
+```env
+GEMINI_API_KEY=sua-chave-gemini
+GEMINI_MODEL=gemini-3.5-flash-lite
+GROQ_API_KEY=sua-chave-groq
+GROQ_MODEL=openai/gpt-oss-120b
+```
+
+`GEMINI_API_KEY` é necessária para a geração primária e para os embeddings RAG. `GEMINI_MODEL` controla somente geração textual; embeddings permanecem fixados em `gemini-embedding-2`. `GROQ_API_KEY` habilita o fallback textual. `GROQ_MODEL` é opcional porque o código possui o default `openai/gpt-oss-120b`. Nenhuma dessas chaves pode usar o prefixo `NEXT_PUBLIC_`.
+
 ## Supabase Edge Function e n8n
 
 Configure estes valores como secrets da Edge Function:

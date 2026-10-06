@@ -1,8 +1,24 @@
 const GROQ_API_URL =
   'https://api.groq.com/openai/v1/chat/completions'
 
-const DEFAULT_GROQ_MODEL =
+export const DEFAULT_GROQ_MODEL =
   'openai/gpt-oss-120b'
+
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
+
+export class GroqGenerationError extends Error {
+  constructor(
+    message: string,
+    readonly details: { model: string; httpStatus?: number; retryable: boolean },
+  ) {
+    super(message)
+    this.name = 'GroqGenerationError'
+  }
+}
+
+export function getConfiguredGroqModel() {
+  return process.env.GROQ_MODEL?.trim() || DEFAULT_GROQ_MODEL
+}
 
 export type GroqResponseFormat =
   | 'json'
@@ -44,9 +60,7 @@ export async function generateWithGroq({
     )
   }
 
-  const model =
-    process.env.GROQ_MODEL?.trim() ||
-    DEFAULT_GROQ_MODEL
+  const model = getConfiguredGroqModel()
 
   const controller =
     new AbortController()
@@ -114,30 +128,31 @@ export async function generateWithGroq({
       )
 
     const data =
-      (await response.json()) as GroqResponse
+      (await response.json().catch(() => null)) as GroqResponse | null
 
     onMetadata?.({
-      finishReason: data.choices?.[0]?.finish_reason,
+      finishReason: data?.choices?.[0]?.finish_reason,
       status: response.status,
     })
 
     if (!response.ok) {
-      throw new Error(
-        data.error?.message ||
-          `Groq respondeu HTTP ${response.status}.`,
+      throw new GroqGenerationError(
+        sanitizeGroqError(data?.error?.message || `Groq respondeu HTTP ${response.status}.`, apiKey, prompt),
+        { model, httpStatus: response.status, retryable: RETRYABLE_STATUSES.has(response.status) },
       )
     }
 
     const text =
       data
-        .choices?.[0]
+        ?.choices?.[0]
         ?.message
         ?.content
         ?.trim()
 
     if (!text) {
-      throw new Error(
+      throw new GroqGenerationError(
         'Groq retornou uma resposta vazia.',
+        { model, httpStatus: response.status, retryable: true },
       )
     }
 
@@ -147,13 +162,24 @@ export async function generateWithGroq({
       error instanceof Error &&
       error.name === 'AbortError'
     ) {
-      throw new Error(
+      throw new GroqGenerationError(
         'Timeout ao consultar o Groq.',
+        { model, retryable: true },
       )
     }
-
-    throw error
+    if (error instanceof GroqGenerationError) throw error
+    throw new GroqGenerationError(
+      error instanceof Error ? sanitizeGroqError(error.message, apiKey, prompt) : 'Erro de comunicação com o Groq.',
+      { model, retryable: true },
+    )
   } finally {
     clearTimeout(timeout)
   }
+}
+
+function sanitizeGroqError(message: string, apiKey: string, prompt: string) {
+  return message
+    .split(apiKey).join('[REDACTED]')
+    .split(prompt).join('[PROMPT_REDACTED]')
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, '$1[REDACTED]')
 }

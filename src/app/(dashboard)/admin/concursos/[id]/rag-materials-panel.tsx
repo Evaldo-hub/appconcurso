@@ -8,6 +8,7 @@ import type { RagAdminMaterial, RagAdminMaterialStatus, RagAdminSnapshot } from 
 import { canStartInitialRagIngestion, type StartRagIngestionResult } from '@/lib/rag/admin-start-ingestion'
 import { getReprocessingEligibility, type ReprocessRagResult } from '@/lib/rag/admin-reprocess-ingestion'
 import { canRetryFailedRagIngestion, type RetryRagResult } from '@/lib/rag/admin-retry-ingestion'
+import type { NormalizedSelectionTaxonomy } from '@/lib/contest-catalog/selection'
 import { NewRagMaterialForm } from './new-rag-material-form'
 import { ReprocessRagButton } from './reprocess-rag-button'
 import { StartRagButton } from './start-rag-button'
@@ -23,7 +24,7 @@ const styles: Record<RagAdminMaterialStatus, string> = {
   PROCESSING: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300',
 }
 
-export function RagMaterialsPanel({ snapshot, contestName, exams, createAction, uploadAction, startAction, retryAction, reprocessAction, feedback }: { snapshot: RagAdminSnapshot; contestName: string; exams: Array<{ id: number; name: string }>; createAction: (formData: FormData) => Promise<void>; uploadAction: (formData: FormData) => Promise<void>; startAction: (state: StartRagIngestionResult | null, formData: FormData) => Promise<StartRagIngestionResult>; retryAction: (state: RetryRagResult | null, formData: FormData) => Promise<RetryRagResult>; reprocessAction: (state: ReprocessRagResult | null, formData: FormData) => Promise<ReprocessRagResult>; feedback?: { kind: 'success' | 'error'; message: string } }) {
+export function RagMaterialsPanel({ snapshot, contestId, contestName, exams, taxonomy, createAction, uploadAction, startAction, retryAction, reprocessAction, feedback }: { snapshot: RagAdminSnapshot; contestId: number; contestName: string; exams: Array<{ id: number; name: string }>; taxonomy: NormalizedSelectionTaxonomy[]; createAction: (formData: FormData) => Promise<void>; uploadAction: (formData: FormData) => Promise<void>; startAction: (state: StartRagIngestionResult | null, formData: FormData) => Promise<StartRagIngestionResult>; retryAction: (state: RetryRagResult | null, formData: FormData) => Promise<RetryRagResult>; reprocessAction: (state: ReprocessRagResult | null, formData: FormData) => Promise<ReprocessRagResult>; feedback?: { kind: 'success' | 'error'; message: string } }) {
   const [filter, setFilter] = useState<Filter>('ALL')
   const filters: Array<{ value: Filter; label: string }> = [
     { value: 'ALL', label: 'Todos' }, { value: 'READY', label: 'Ready' }, { value: 'PENDING', label: 'Pending' }, { value: 'ERROR', label: 'Erro' },
@@ -34,7 +35,7 @@ export function RagMaterialsPanel({ snapshot, contestName, exams, createAction, 
     || (filter === 'ERROR' ? material.ragStatus === 'ERROR' || material.ragStatus === 'DAILY_QUOTA_BLOCKED' : material.ragStatus === filter)), [filter, snapshot.materials])
 
   return <section className="space-y-4" aria-labelledby="rag-materials-title">
-    <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h2 id="rag-materials-title" className="text-xl font-bold">Materiais RAG</h2><p className="text-sm text-muted-foreground">Cadastro de fontes e observabilidade das ingestões e documentos RAG-V2.</p></div><NewRagMaterialForm contestName={contestName} exams={exams} action={createAction} uploadAction={uploadAction} /></div>
+    <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h2 id="rag-materials-title" className="text-xl font-bold">Materiais RAG</h2><p className="text-sm text-muted-foreground">Cadastro de fontes e observabilidade das ingestões e documentos RAG-V2.</p></div><NewRagMaterialForm contestId={contestId} contestName={contestName} exams={exams} taxonomy={taxonomy} action={createAction} uploadAction={uploadAction} /></div>
     {feedback && <p role="status" className={`rounded-md border p-3 text-sm ${feedback.kind === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>{feedback.message}</p>}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       <Metric title="Materiais" value={snapshot.summary.totalMaterials} icon={FileStack} />

@@ -8,6 +8,7 @@ import {
   buildNormalizedSelectionTaxonomy,
   listarAssuntosDaProva,
   listarDisciplinasDaProva,
+  listarDisciplinasDoConcurso,
   listarSubassuntosDaProva,
   type NormalizedSelectionCatalog,
 } from './selection'
@@ -43,6 +44,20 @@ async function realCatalog() {
   return { catalog, plan, examIdByCode, contentIdByKey }
 }
 
+test('união de disciplinas do concurso remove duplicatas e preserva a ordem canônica', () => {
+  const catalog: NormalizedSelectionCatalog = {
+    contests: [], exams: [], taxonomy: [
+      { contestId: 7, examId: 10, discipline: 'Língua Portuguesa', subject: null, subsubject: null, disciplineOrder: 1, subjectOrder: null, subsubjectOrder: null, order: 1 },
+      { contestId: 7, examId: 10, discipline: 'Matemática e Raciocínio Lógico', subject: null, subsubject: null, disciplineOrder: 2, subjectOrder: null, subsubjectOrder: null, order: 2 },
+      { contestId: 7, examId: 11, discipline: 'Língua Portuguesa', subject: 'Interpretação', subsubject: null, disciplineOrder: 1, subjectOrder: 1, subsubjectOrder: null, order: 1 },
+      { contestId: 7, examId: 11, discipline: 'Noções de Direito Administrativo', subject: null, subsubject: null, disciplineOrder: 3, subjectOrder: null, subsubjectOrder: null, order: 3 },
+      { contestId: 8, examId: 20, discipline: 'Disciplina de outro concurso', subject: null, subsubject: null, disciplineOrder: 1, subjectOrder: null, subsubjectOrder: null, order: 1 },
+    ],
+  }
+  assert.deepEqual(listarDisciplinasDaProva(catalog, 10), ['Língua Portuguesa', 'Matemática e Raciocínio Lógico'])
+  assert.deepEqual(listarDisciplinasDoConcurso(catalog, 7), ['Língua Portuguesa', 'Matemática e Raciocínio Lógico', 'Noções de Direito Administrativo'])
+})
+
 test('TRT8 normalizado preserva 24 provas e as contagens de vínculos auditadas', async () => {
   const { catalog, examIdByCode } = await realCatalog()
   assert.equal(catalog.exams.length, 24)
@@ -51,6 +66,25 @@ test('TRT8 normalizado preserva 24 provas e as contagens de vínculos auditadas'
     const examId = examIdByCode.get(`TRT8-2026-${suffix}`)!
     assert.equal(catalog.taxonomy.filter((row) => row.examId === examId).length, count)
   }
+})
+
+test('C03 expõe as disciplinas canônicas reais na ordem do catálogo', async () => {
+  const { catalog, examIdByCode } = await realCatalog()
+  const disciplines = listarDisciplinasDaProva(catalog, examIdByCode.get('TRT8-2026-C03')!)
+  assert.deepEqual(disciplines, [
+    'Língua Portuguesa',
+    'Matemática e Raciocínio Lógico',
+    'Noções de Legislação',
+    'Noções de Direitos Humanos',
+    'Noções sobre Direitos das Pessoas com Deficiência',
+    'Noções de Informática',
+    'Noções de Direito Constitucional',
+    'Noções de Direito Administrativo e de Administração Pública',
+    'Noções de Orçamento Público',
+    'Noções de Gestão de Pessoas',
+    'Noções de Administração Geral',
+    'Noções Gerais de Recursos Materiais',
+  ])
 })
 
 test('Informática surge somente dos vínculos e não aparece nas provas C04/C23', async () => {

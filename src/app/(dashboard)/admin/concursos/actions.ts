@@ -95,7 +95,7 @@ export async function saveRagMaterialAction(routeConcursoId: number, formData: F
     materialId = (await registerExistingRagMaterial(repository, github, routeConcursoId, parsed.data)).id
   } catch (error) {
     const status = error instanceof RagMaterialRegistrationError
-      ? ({ INVALID_EXAM: 'exam', DUPLICATE: 'duplicate', INVALID_CONTEST: 'contest', GITHUB_FILE_NOT_FOUND: 'github_file_not_found', GITHUB_FILE_CHECK_FAILED: 'github_file_check_failed', INSERT_FAILED: 'error' } as const)[error.code]
+      ? ({ INVALID_EXAM: 'exam', INVALID_DISCIPLINE: 'discipline', DUPLICATE: 'duplicate', INVALID_CONTEST: 'contest', GITHUB_FILE_NOT_FOUND: 'github_file_not_found', GITHUB_FILE_CHECK_FAILED: 'github_file_check_failed', INSERT_FAILED: 'error' } as const)[error.code]
       : 'error'
     redirect(`/admin/concursos/${routeConcursoId}?material_status=${status}`)
   }
@@ -151,7 +151,7 @@ export async function uploadRagMaterialAction(routeConcursoId: number, formData:
       errorMessage: error instanceof Error ? sanitizeRagUploadDiagnostic(error.message) : 'Falha desconhecida.',
     })
     if (error instanceof RagMaterialRegistrationError) {
-      const status = error.code === 'INVALID_EXAM' ? 'exam' : error.code === 'DUPLICATE' ? 'duplicate' : 'upload_error'
+      const status = error.code === 'INVALID_EXAM' ? 'exam' : error.code === 'INVALID_DISCIPLINE' ? 'discipline' : error.code === 'DUPLICATE' ? 'duplicate' : 'upload_error'
       failureUrl = `/admin/concursos/${routeConcursoId}?material_status=${status}`
     }
     else if (error instanceof RagMaterialUploadError) {

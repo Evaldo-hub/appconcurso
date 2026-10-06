@@ -37,6 +37,7 @@ function fixture(options: { duplicate?: boolean; githubExists?: boolean; githubF
   const registration: RagMaterialRegistrationRepository = {
     contestExists: async () => true,
     examBelongsToContest: async () => options.examValid ?? true,
+    disciplineBelongsToSelection: async () => true,
     duplicateExists: async () => options.duplicate ?? false,
     insertMaterial: async (value) => {
       if (options.insertFails) throw new Error('db unavailable')
@@ -230,7 +231,7 @@ test('token ausente falha fechado antes de qualquer chamada de escrita', async (
   assert.equal(fetchCalls, 0)
 })
 
-test('HTTP 401, 403, 404, 409 e 422 geram códigos e logs seguros com o body lido uma vez', async () => {
+test('writer converte HTTP 401, 403, 404, 409 e 422 em erros estruturados e sanitizados', async () => {
   const fakeToken = 'github_pat_FAKE_TEST_ONLY'
   const expected = new Map([
     [401, 'RAG_GITHUB_AUTH_FAILED'],
@@ -239,33 +240,57 @@ test('HTTP 401, 403, 404, 409 e 422 geram códigos e logs seguros com o body lid
     [409, 'RAG_GITHUB_CONFLICT'],
     [422, 'RAG_GITHUB_VALIDATION_FAILED'],
   ])
-  const originalConsoleError = console.error
+  for (const [status, code] of expected) {
+    const body = JSON.stringify({ message: `GitHub status ${status}; Authorization: Bearer ${fakeToken}`, documentation_url: 'https://docs.github.test/rest' })
+    const writer = createGitHubMaterialWriter(
+      { owner: 'owner', repository: 'repo', ref: 'main', token: fakeToken },
+      (async () => new Response(body, { status, statusText: 'Rejected' })) as typeof fetch,
+    )
+    await assert.rejects(
+      writer.createFile('concursos/trt8/2022/edital/novo.pdf', new Uint8Array([1]), 'Add RAG material: novo.pdf'),
+      (error) => error instanceof RagGitHubRequestError
+        && error.status === status
+        && error.code === code
+        && error.githubMessage === `GitHub status ${status}; Authorization: Bearer [REDACTED]`
+        && error.documentationUrl === 'https://docs.github.test/rest',
+    )
+  }
+})
+
+test('boundary de upload registra falha GitHub sem token, Authorization ou conteúdo do arquivo', async () => {
+  const fakeToken = 'github_pat_FAKE_TEST_ONLY'
+  const secretContent = 'PDF_SECRET_CONTENT'
   const logs: unknown[][] = []
+  const originalConsoleError = console.error
   console.error = (...values: unknown[]) => { logs.push(values) }
   try {
-    for (const [status, code] of expected) {
-      const body = JSON.stringify({ message: `GitHub status ${status}; Authorization: Bearer ${fakeToken}`, documentation_url: 'https://docs.github.test/rest' })
-      const writer = createGitHubMaterialWriter(
-        { owner: 'owner', repository: 'repo', ref: 'main', token: fakeToken },
-        (async () => new Response(body, { status, statusText: 'Rejected' })) as typeof fetch,
-      )
-      await assert.rejects(
-        writer.createFile('concursos/trt8/2022/edital/novo.pdf', new Uint8Array([1]), 'Add RAG material: novo.pdf'),
-        (error) => error instanceof RagGitHubRequestError
-          && error.status === status
-          && error.code === code
-          && error.githubMessage === `GitHub status ${status}; Authorization: Bearer [REDACTED]`
-          && error.documentationUrl === 'https://docs.github.test/rest',
+    const state = fixture()
+    state.dependencies.github.createFile = async () => {
+      throw new RagGitHubRequestError(
+        'RAG_GITHUB_PERMISSION_DENIED',
+        403,
+        `Authorization: Bearer ${fakeToken}`,
+        null,
+        'upload',
+        'GITHUB_UPLOAD_REJECTED',
+        'Forbidden',
+        'request-id',
       )
     }
+    await expectUploadError(
+      uploadAndRegisterRagMaterial(state.dependencies, 7, metadata, file('seguro.pdf', `%PDF-${secretContent}`, 'application/pdf')),
+      'RAG_GITHUB_PERMISSION_DENIED',
+    )
   } finally {
     console.error = originalConsoleError
   }
-  assert.equal(logs.length, expected.size)
+  assert.equal(logs.length, 1)
   const serializedLogs = JSON.stringify(logs)
+  assert.match(serializedLogs, /\[RAG_UPLOAD\]\[ERROR\]/)
+  assert.match(serializedLogs, /concursos\/trt8\/2022\/documentos_gerais\/seguro\.pdf/)
   assert.equal(serializedLogs.includes(fakeToken), false)
   assert.equal(serializedLogs.includes('Authorization'), false)
-  assert.match(serializedLogs, /concursos\/trt8\/2022\/edital\/novo\.pdf/)
+  assert.equal(serializedLogs.includes(secretContent), false)
 })
 
 test('falha de rede antes de Response preserva estágio, mensagem sanitizada e cause code', async () => {
