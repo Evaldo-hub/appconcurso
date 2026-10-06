@@ -2,6 +2,8 @@ import 'server-only'
 
 import { z } from 'zod'
 import { generateWithGemini, getConfiguredGeminiModel, type GeminiGenerationTelemetry, type GeminiGenerateOptions } from '@/lib/ai/gemini'
+import { generateWithGroq, getConfiguredGroqModel } from '@/lib/ai/groq'
+import { createGeminiGroqFallback, type ProviderFailureDetails } from '@/lib/ai/gemini-groq-fallback'
 import { validateSourceCitationIntegrity, type RagGeneratedQuestion, type ResolvedGeneratedQuestionSource } from './generated-question'
 
 const checksSchema = z.object({
@@ -53,6 +55,16 @@ export class RagQuestionValidationError extends Error {
   constructor(message: string) {
     super(message)
     this.name = 'RagQuestionValidationError'
+  }
+}
+
+export class SemanticAiUnavailableError extends Error {
+  constructor(
+    readonly primary: ProviderFailureDetails,
+    readonly fallback: ProviderFailureDetails,
+  ) {
+    super('SEMANTIC_AI_PROVIDERS_UNAVAILABLE')
+    this.name = 'SemanticAiUnavailableError'
   }
 }
 
@@ -172,6 +184,29 @@ export async function validateWithConfiguredGemini(
   return { text, provider: 'gemini', model: respondingModel, telemetry }
 }
 
+export interface SemanticProviderFallbackDependencies {
+  primary: (prompt: string) => Promise<RagQuestionValidationModelResult>
+  fallback: (prompt: string) => Promise<RagQuestionValidationModelResult>
+  sleep?: (delayMs: number) => Promise<void>
+  fallbackConfigured?: () => boolean
+  logger?: Pick<Console, 'info' | 'warn' | 'error'>
+}
+
+export function createSemanticValidationProviderFallback(dependencies: SemanticProviderFallbackDependencies) {
+  return createGeminiGroqFallback<RagQuestionValidationModelResult>({
+    scope: 'SEMANTIC_AI', ...dependencies,
+    createUnavailableError: (primary, fallback) => new SemanticAiUnavailableError(primary, fallback),
+  })
+}
+
+export const validateWithProviderFallback = createSemanticValidationProviderFallback({
+  primary: validateWithConfiguredGemini,
+  async fallback(prompt) {
+    const text = await generateWithGroq({ prompt, temperature: 0, responseFormat: 'json' })
+    return { text, provider: 'groq', model: getConfiguredGroqModel() }
+  },
+})
+
 export const validateRagGeneratedQuestion = createRagQuestionValidator({
-  validateWithModel: validateWithConfiguredGemini,
+  validateWithModel: validateWithProviderFallback,
 })
